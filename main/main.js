@@ -16,6 +16,7 @@ const __dirname = path.dirname(__filename);
 
 let win;
 
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 // --- Create BrowserWindow ---
 function createWindow() {
     win = new BrowserWindow({

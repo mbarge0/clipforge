@@ -5,6 +5,7 @@
   "main": "main/main.js",
   "type": "module",
   "scripts": {
+    "preload:build": "tsc main/preload.ts --outDir main --target ES2020 --module commonjs",
     "dev": "cross-env VITE_DEV=1 concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electronmon .\"",
     "start": "electron-forge start",
     "make": "electron-forge make",
@@ -27,7 +28,7 @@
     "cross-env": "^7.0.3",
     "electron": "^32.3.3",
     "electronmon": "^2.0.4",
-    "typescript": "^5.3.3",
+    "typescript": "^5.9.3",
     "vite": "^5.0.0",
     "wait-on": "^9.0.1"
   },

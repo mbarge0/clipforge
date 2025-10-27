@@ -1,27 +1,47 @@
 {
   "compilerOptions": {
-    "target": "ESNext",
-    "useDefineForClassFields": true,
+    /* Basic Options */
+    "target": "ES2020",
+    "module": "commonjs",
     "lib": [
       "DOM",
-      "DOM.Iterable",
-      "ESNext"
+      "ES2020"
     ],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "sourceMap": true,
     "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "module": "ESNext",
-    "moduleResolution": "Node",
+    /* TypeScript + Electron interop */
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx"
+    "noEmitOnError": false,
+    "jsx": "react-jsx",
+    "types": [
+      "node",
+      "electron"
+    ],
+    /* For clean preload compilation */
+    "noEmit": false
   },
   "include": [
-    "renderer/**/*",
-    "main/**/*"
-  ]
+    "main/**/*.ts",
+    "renderer/src/**/*.ts",
+    "renderer/src/**/*.tsx",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ],
+  "ts-node": {
+    "esm": true,
+    "transpileOnly": true
+  }
 }
