@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    /* Basic Options */
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": [
+      "DOM",
+      "ES2020"
+    ],
+    "outDir": "./dist",
+    "rootDir": ".",
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    /* TypeScript + Electron interop */
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmitOnError": false,
+    "jsx": "react-jsx",
+    "types": [
+      "node",
+      "electron"
+    ],
+    /* For clean preload compilation */
+    "noEmit": false
+  },
+  "include": [
+    "main/**/*.ts",
+    "renderer/src/**/*.ts",
+    "renderer/src/**/*.tsx",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ],
+  "ts-node": {
+    "esm": true,
+    "transpileOnly": true
+  }
+}

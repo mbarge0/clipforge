@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "description": "Foundry subtemplate for Electron/Tauri desktop apps (ClipForge base)",
   "main": "main/main.js",
+  "type": "module",
   "scripts": {
+    "preload:build": "tsc main/preload.ts --outDir main --target ES2020 --module commonjs",
+    "dev": "cross-env VITE_DEV=1 concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electronmon .\"",
     "start": "electron-forge start",
-    "dev": "cross-env VITE_DEV=1 electron .",
     "make": "electron-forge make",
-    "pack:mac": "electron-forge make --platform=darwin --arch=arm64,x64",
-    "pack:win": "electron-forge make --platform=win32 --arch=x64",
     "package": "electron-forge package"
   },
   "devDependencies": {
@@ -21,10 +21,14 @@
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron-forge/plugin-vite": "^7.10.2",
     "@electron/fuses": "^1.8.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "electron": "^32.3.3",
-    "typescript": "^5.3.3",
+    "electronmon": "^2.0.4",
+    "typescript": "^5.9.3",
     "vite": "^5.0.0",
     "wait-on": "^9.0.1"
   },
@@ -32,8 +36,8 @@
     "electron-squirrel-startup": "^1.0.1",
     "ffmpeg-static": "^5.1.0",
     "fluent-ffmpeg": "^2.1.2",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "zustand": "^4.5.0"
   },
   "foundryTemplate": {

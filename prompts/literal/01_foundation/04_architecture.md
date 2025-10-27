@@ -9,4 +9,4 @@ Before writing or generating architecture files, ask me questions to clarify the
 When you get confirmation to write the architecture document, write the result to `/docs/foundation/architecture.md`.
 **Architecture Loop Template reference**: `/prompts/system/foundation/04_architecture_loop.md`
 
-PRD is located inside /docs/foundation folder.
+Foundation documents are located inside /docs/foundation folder.

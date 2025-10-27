@@ -7,4 +7,4 @@ Group by module (auth, chat, AI, etc.) and output to `/docs/foundation/dev_check
 
 **Checklist Loop Template reference:** `/prompts/system/foundation/06_dev_checklist_loop.md`
 
-PRD and architecture documents are located in /docs/foundation folder.
+Foundation documents are located in /docs/foundation folder.

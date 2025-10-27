@@ -1,7 +1,7 @@
 **When to use**: At the **beginning of a new project** or when performing a **major visual redesign** that affects all modules and phases.  
 **When not to use**: During a single-phase design or build process — this defines global design rules, not per-feature styles.  
 
-Use this prompt to **generate the foundational UI Guidelines document** for the entire product.  
+Let's **generate the foundational UI Guidelines document** for the entire product.  
 It should establish a consistent visual and interaction language that future Design, Build, and UI Review phases will reference.  
 
 The generated document will be stored in:  
