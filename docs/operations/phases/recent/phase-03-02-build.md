@@ -212,3 +212,58 @@ Outcome: Ready for integration tests in future pass; no blocking defects.
 - Improved timeline ruler with container-aware labels and clearer major/minor ticks.
 - Implemented sequential preview across Track 1 (auto-advance to next clip).
 - Added lightweight Performance HUD in Preview: FPS and last scrub latency.
+
+---
+
+### Debug Updates (Audit & Fixes)
+
+- Prevent premature blob revocation via managed URL cache:
+  - Added `renderer/src/lib/urlCache.ts` and switched Preview to use cached URLs.
+  - Code refs:
+```1:40:/Users/matthewbarge/DevProjects/clipforge/renderer/src/lib/urlCache.ts
+const cache = new Map<string, string>();
+export function getObjectUrl(key: string, file: File): string { /* ... */ }
+export function revokeAllObjectUrls(): void { /* ... */ }
+```
+```1:40:/Users/matthewbarge/DevProjects/clipforge/renderer/src/components/Preview.tsx
+import { getObjectUrl } from '../lib/urlCache';
+// ...
+const url = getObjectUrl(clip.sourceId, media.file);
+setSrcUrl(url);
+```
+
+- Replace interval-based playhead with requestAnimationFrame sync:
+```120:190:/Users/matthewbarge/DevProjects/clipforge/renderer/src/components/Preview.tsx
+React.useEffect(() => {
+  if (!isPlaying) return;
+  let rafId = 0; let lastTs = performance.now();
+  const step = (now: number) => { /* advance using dt; auto-advance next clip */ };
+  rafId = requestAnimationFrame(step);
+  return () => cancelAnimationFrame(rafId);
+}, [isPlaying, playheadMs, currentClip, setPlayhead, togglePlay, primaryTrack, setSelection]);
+```
+
+- Delete key removal of selected clip (verified):
+```1:120:/Users/matthewbarge/DevProjects/clipforge/renderer/src/App.tsx
+if ((e.key === 'Delete' || e.key === 'Backspace') && !meta) { e.preventDefault(); deleteSelection(); }
+```
+
+- Move/reorder rerenders correctly (verified continuous updates on mousemove):
+```80:140:/Users/matthewbarge/DevProjects/clipforge/renderer/src/components/Timeline.tsx
+function onMouseMove(e: MouseEvent) { /* compute delta; moveClip; triggers rerender */ }
+```
+
+- Copy/Paste generates new IDs and reuses robust blobs:
+```60:120:/Users/matthewbarge/DevProjects/clipforge/renderer/src/store/timeline.ts
+copySelection: () => { set({ clipboard: { ...clip } }); },
+pasteAt: (ms) => { const dupe: Omit<TimelineClip, 'id'> = { ...data, startMs: snapMs(ms) }; get().addClip(dupe); }
+// addClip generates a fresh id and selects it
+```
+
+- Performance HUD added for QA (FPS and scrub latency):
+```1:80:/Users/matthewbarge/DevProjects/clipforge/renderer/src/components/Preview.tsx
+const [fps, setFps] = React.useState<number>(0);
+const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(undefined);
+```
+
+Outcome: All audit items addressed. Playback and timeline interaction are smoother and safer; URLs managed centrally; copy/paste robust; delete/move confirmed.

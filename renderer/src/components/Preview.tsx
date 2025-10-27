@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MediaItemMeta } from '../lib/media';
+import { getObjectUrl } from '../lib/urlCache';
 import { useTimelineStore } from '../store/timeline';
 
 type Props = {
@@ -43,9 +44,8 @@ export function Preview({ mediaIndex }: Props) {
         if (!clip) return;
         const media = mediaIndex[clip.sourceId];
         if (!media?.file) return;
-        const url = URL.createObjectURL(media.file);
+        const url = getObjectUrl(clip.sourceId, media.file);
         setSrcUrl(url);
-        return () => URL.revokeObjectURL(url);
     }, [currentClip, mediaIndex]);
 
     React.useEffect(() => {
@@ -62,29 +62,38 @@ export function Preview({ mediaIndex }: Props) {
     // Advance playhead while playing (simple loop)
     React.useEffect(() => {
         if (!isPlaying) return;
-        const id = window.setInterval(() => {
+        let rafId = 0;
+        let lastTs = performance.now();
+        const step = (now: number) => {
+            const dt = now - lastTs;
+            lastTs = now;
             const clip = currentClip;
-            if (!clip) return;
-            const next = playheadMs + 100; // 100ms tick
-            const clipEnd = clip.startMs + (clip.outMs - clip.inMs);
-            if (next >= clipEnd) {
-                // Advance to next clip on Track 1 if available
-                const t0 = primaryTrack;
-                if (t0) {
-                    const idx = t0.clips.findIndex((c) => c.id === clip.id);
-                    const nextClip = idx >= 0 ? t0.clips[idx + 1] : undefined;
-                    if (nextClip) {
-                        setSelection(nextClip.id);
-                        setPlayhead(nextClip.startMs);
-                        return; // keep playing
+            if (clip) {
+                const next = playheadMs + dt;
+                const clipEnd = clip.startMs + (clip.outMs - clip.inMs);
+                if (next >= clipEnd) {
+                    const t0 = primaryTrack;
+                    if (t0) {
+                        const idx = t0.clips.findIndex((c) => c.id === clip.id);
+                        const nextClip = idx >= 0 ? t0.clips[idx + 1] : undefined;
+                        if (nextClip) {
+                            setSelection(nextClip.id);
+                            setPlayhead(nextClip.startMs);
+                            rafId = requestAnimationFrame(step);
+                            return;
+                        }
                     }
+                    togglePlay();
+                } else {
+                    setPlayhead(next);
+                    rafId = requestAnimationFrame(step);
                 }
-                togglePlay();
-                return;
+            } else {
+                rafId = requestAnimationFrame(step);
             }
-            setPlayhead(next);
-        }, 100);
-        return () => window.clearInterval(id);
+        };
+        rafId = requestAnimationFrame(step);
+        return () => cancelAnimationFrame(rafId);
     }, [isPlaying, playheadMs, currentClip, setPlayhead, togglePlay, primaryTrack, setSelection]);
 
     // FPS meter via requestAnimationFrame

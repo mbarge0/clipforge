@@ -1,8 +1,13 @@
+// renderer/src/lib/media.ts
+// -----------------------------
+
+// --- Constants ---
 export const SUPPORTED_EXTENSIONS = ["mp4", "mov", "webm"] as const;
 export const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500MB
 
 export type SupportedExtension = typeof SUPPORTED_EXTENSIONS[number];
 
+// --- Helpers: file validation ---
 export function getFileExtension(filename: string): string {
     const idx = filename.lastIndexOf(".");
     return idx >= 0 ? filename.slice(idx + 1).toLowerCase() : "";
@@ -45,10 +50,29 @@ export function formatDuration(ms: number): string {
     return `${m}:${s}`;
 }
 
+// --- Blob Cache Management ---
+const blobCache = new Map<string, string>();
+
+export function getObjectURL(file: File): string {
+    if (blobCache.has(file.name)) return blobCache.get(file.name)!;
+    const url = URL.createObjectURL(file);
+    blobCache.set(file.name, url);
+    return url;
+}
+
+export function revokeObjectURLSafe(file: File) {
+    const url = blobCache.get(file.name);
+    if (url) {
+        URL.revokeObjectURL(url);
+        blobCache.delete(file.name);
+    }
+}
+
+// --- Metadata & Thumbnail Extraction ---
 export interface MediaItemMeta {
     id: string;
     file: File;
-    path?: string; // Electron provides File.path in drop/picker contexts
+    path?: string;
     name: string;
     sizeBytes: number;
     width?: number;
@@ -59,80 +83,83 @@ export interface MediaItemMeta {
     error?: string;
 }
 
-export async function extractVideoMetadataAndThumbnail(file: File): Promise<Pick<MediaItemMeta, 'width' | 'height' | 'durationMs' | 'thumbnailDataUrl'>> {
-    const url = URL.createObjectURL(file);
-    try {
-        const video = document.createElement('video');
-        video.src = url;
-        video.crossOrigin = 'anonymous';
-        video.muted = true;
+/**
+ * Extracts video metadata and generates a thumbnail without revoking the blob URL immediately.
+ * The blob is managed in a cache and must be explicitly revoked when no longer needed.
+ */
+export async function extractVideoMetadataAndThumbnail(
+    file: File
+): Promise<Pick<MediaItemMeta, "width" | "height" | "durationMs" | "thumbnailDataUrl">> {
+    const url = getObjectURL(file);
 
-        await waitForEvent(video, 'loadedmetadata', 5000);
+    const video = document.createElement("video");
+    video.src = url;
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
 
-        const duration = isFinite(video.duration) ? video.duration : 0;
-        const targetTime = duration && duration > 1 ? Math.min(duration / 2, duration - 0.1) : 0;
-        if (targetTime > 0) {
-            try {
-                await seekVideo(video, targetTime, 500);
-            } catch {
-                // fallback: continue with current frame
-            }
+    await waitForEvent(video, "loadedmetadata", 5000);
+
+    const duration = isFinite(video.duration) ? video.duration : 0;
+    const targetTime = duration && duration > 1 ? Math.min(duration / 2, duration - 0.1) : 0;
+    if (targetTime > 0) {
+        try {
+            await seekVideo(video, targetTime, 500);
+        } catch {
+            // continue even if seeking fails
         }
-
-        const maxThumbWidth = 320;
-        const scale = Math.min(1, maxThumbWidth / Math.max(1, video.videoWidth));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
-        canvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Canvas unsupported');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-
-        return {
-            width: video.videoWidth || undefined,
-            height: video.videoHeight || undefined,
-            durationMs: Math.max(0, Math.round(duration * 1000)) || undefined,
-            thumbnailDataUrl: dataUrl,
-        };
-    } finally {
-        URL.revokeObjectURL(url);
     }
+
+    const maxThumbWidth = 320;
+    const scale = Math.min(1, maxThumbWidth / Math.max(1, video.videoWidth));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas unsupported");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+
+    return {
+        width: video.videoWidth || undefined,
+        height: video.videoHeight || undefined,
+        durationMs: Math.max(0, Math.round(duration * 1000)) || undefined,
+        thumbnailDataUrl: dataUrl,
+    };
 }
 
+// --- Utility Promises ---
 function waitForEvent(el: HTMLMediaElement, event: string, timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
         const onOk = () => cleanup(resolve);
-        const onErr = () => cleanup(() => reject(new Error('media error')));
-        const onTimeout = setTimeout(() => cleanup(() => reject(new Error('timeout'))), timeoutMs);
+        const onErr = () => cleanup(() => reject(new Error("media error")));
+        const onTimeout = setTimeout(() => cleanup(() => reject(new Error("timeout"))), timeoutMs);
         const cleanup = (fn: () => void) => {
             clearTimeout(onTimeout);
             el.removeEventListener(event, onOk);
-            el.removeEventListener('error', onErr);
+            el.removeEventListener("error", onErr);
             fn();
         };
         el.addEventListener(event, onOk);
-        el.addEventListener('error', onErr);
+        el.addEventListener("error", onErr);
     });
 }
 
 function seekVideo(video: HTMLVideoElement, time: number, timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
         const onSeeked = () => cleanup(resolve);
-        const onTimeout = setTimeout(() => cleanup(() => reject(new Error('seek timeout'))), timeoutMs);
+        const onTimeout = setTimeout(() => cleanup(() => reject(new Error("seek timeout"))), timeoutMs);
         const cleanup = (fn: () => void) => {
             clearTimeout(onTimeout);
-            video.removeEventListener('seeked', onSeeked);
+            video.removeEventListener("seeked", onSeeked);
             fn();
         };
-        video.addEventListener('seeked', onSeeked);
+        video.addEventListener("seeked", onSeeked);
         try {
             video.currentTime = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.05)));
         } catch {
-            cleanup(() => reject(new Error('seek error')));
+            cleanup(() => reject(new Error("seek error")));
         }
     });
 }
-
-
