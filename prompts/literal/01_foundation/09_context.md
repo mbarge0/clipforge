@@ -20,4 +20,4 @@ When the context snapshot feels complete and accurate, write the result to `/doc
 
 **Context Loop Template reference:** `/prompts/system/foundation/09_context_loop.md`
 
-All foundation documents (PRD, Architecture, Dev Checklist, and Regression Checklist) are located in the `/docs/foundation` folder.
+All foundation documents (PRD, Architecture, Dev Checklist) are located in the `/docs/foundation` folder.

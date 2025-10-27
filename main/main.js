@@ -1,42 +1,60 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// --- DEV STABILITY PATCHES ---
+// Disable GPU & hardware acceleration (prevents macOS Electron crash loop)
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('ignore-certificate-errors');
+app.commandLine.appendSwitch('no-sandbox'); // Fixes SIGTRAP GPU sandbox crash
+
+// --- Resolve paths ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let win;
 
+// --- Create BrowserWindow ---
 function createWindow() {
     win = new BrowserWindow({
         width: 1000,
         height: 700,
+        minWidth: 800,
+        minHeight: 600,
         webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js'),
         },
     });
 
-    const startURL =
-        process.env.VITE_DEV === '1'
-            ? 'http://localhost:5173'
-            : `file://${path.join(__dirname, '../dist/index.html')}`;
+    // --- Determine URL based on environment ---
+    const isDev = process.env.VITE_DEV?.toString().trim() === '1';
+    const startURL = isDev
+        ? 'http://localhost:5173'
+        : `file://${path.join(__dirname, '../dist/index.html')}`;
 
+    console.log(`[main] Launching ClipForge in ${isDev ? 'DEV' : 'PROD'} mode`);
+    console.log(`[main] Loading URL → ${startURL}`);
+
+    // Load app
     win.loadURL(startURL);
 
-    // 👇 DEV-ONLY FEATURES
-    if (process.env.VITE_DEV === '1') {
-        // Open Chrome DevTools in detached window
+    // --- Dev-only behavior ---
+    if (isDev) {
         win.webContents.openDevTools({ mode: 'detach' });
 
-        // Handle Vite refresh crashes gracefully
+        // Retry if renderer isn't ready yet (Vite warmup)
         win.webContents.on('did-fail-load', () => {
-            console.log('🔄 Renderer not ready yet — retrying load...');
+            console.warn('⚠️ Renderer not ready — retrying...');
             setTimeout(() => win.loadURL(startURL), 1000);
         });
     }
 }
 
+// --- Electron Lifecycle ---
 app.whenReady().then(() => {
     createWindow();
 
@@ -47,4 +65,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
+});
+
+// --- IPC Bridge Test (health check) ---
+ipcMain.handle('app:ping', async (_event, message) => {
+    return `pong:${message ?? ''}`;
 });

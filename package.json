@@ -5,11 +5,9 @@
   "main": "main/main.js",
   "type": "module",
   "scripts": {
+    "dev": "cross-env VITE_DEV=1 concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electronmon .\"",
     "start": "electron-forge start",
-    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electronmon .\"",
     "make": "electron-forge make",
-    "pack:mac": "electron-forge make --platform=darwin --arch=arm64,x64",
-    "pack:win": "electron-forge make --platform=win32 --arch=x64",
     "package": "electron-forge package"
   },
   "devDependencies": {
