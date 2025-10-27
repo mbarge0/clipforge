@@ -22,9 +22,9 @@ Pause if any design or scope assumption needs clarification before build.
 Store the resulting report under `/docs/operations/phases/recent/phase-XX-01-plan.md`. New work goes into `/docs/operations/phases/recent/`; move completed artifacts together to `/docs/operations/phases/archive/`. If the current supermodule or module does not have a number, assign it the next available phase number from the development checklist.
 
 **System Template references:**  
-- Phase Start Template: `/prompts/system/01_phase_starter.md`  
-- Planning Loop Template: `/prompts/system/02_planning_loop.md`  
-- Design Loop Template: `/prompts/system/03_design_loop.md`  
+- Phase Start Template: `/prompts/system/phases/01_phase_starter.md`  
+- Planning Loop Template: `/prompts/system/phases/02_planning_loop.md`  
+- Design Loop Template: `/prompts/system/phases/03_design_loop.md`  
 
 **Previous phase documentation:** `/docs/operations/phases/phase-03-03-reflect.md`  
 **PRD, architecture, and dev checklist:** `/docs/foundation/`  
