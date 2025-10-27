@@ -16,8 +16,23 @@ export function Timeline({ mediaIndex }: Props) {
     const addClip = useTimelineStore((s) => s.addClip);
     const trimClip = useTimelineStore((s) => s.trimClip);
     const moveClip = useTimelineStore((s) => s.moveClip);
+    const markScrubRequest = useTimelineStore((s) => s.markScrubRequest);
 
     const containerRef = React.useRef<HTMLDivElement | null>(null);
+    const [containerWidth, setContainerWidth] = React.useState<number>(1200);
+
+    React.useEffect(() => {
+        if (!containerRef.current) return;
+        const el = containerRef.current;
+        const ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const w = Math.floor(entry.contentRect.width);
+                if (w > 0) setContainerWidth(w);
+            }
+        });
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
 
     function onDrop(e: React.DragEvent, trackId: string) {
         e.preventDefault();
@@ -41,6 +56,7 @@ export function Timeline({ mediaIndex }: Props) {
         const rect = containerRef.current?.getBoundingClientRect();
         const x = e.clientX - (rect?.left || 0);
         const ms = pxToMs(x);
+        markScrubRequest(Date.now());
         setPlayhead(ms);
         setSelection(undefined);
     }
@@ -104,8 +120,8 @@ export function Timeline({ mediaIndex }: Props) {
             </div>
             <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8 }}>
                 {/* Ruler */}
-                <div style={{ position: 'relative', height: 24, background: '#0B0C10', borderRadius: 6, overflow: 'hidden' }}>
-                    <Ruler playheadMs={playheadMs} />
+                <div style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden' }}>
+                    <Ruler playheadMs={playheadMs} width={containerWidth} />
                 </div>
                 {/* Tracks */}
                 <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
@@ -129,6 +145,7 @@ export function Timeline({ mediaIndex }: Props) {
                                             background: track.id === 't1' ? '#0EA5E9' : '#10B981',
                                             opacity: 0.85,
                                             border: isSelected ? '2px solid #F59E0B' : '1px solid #0C4A6E',
+                                            boxShadow: isSelected ? '0 0 0 2px #38BDF8' : undefined, // focus ring
                                             borderRadius: 6,
                                             color: '#0B1220',
                                             display: 'flex',
@@ -139,6 +156,7 @@ export function Timeline({ mediaIndex }: Props) {
                                             userSelect: 'none',
                                         }}
                                         role="button"
+                                        tabIndex={0}
                                         aria-label={`Clip ${clip.name}`}
                                     >
                                         <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
@@ -166,19 +184,22 @@ export function Timeline({ mediaIndex }: Props) {
     );
 }
 
-function Ruler({ playheadMs }: { playheadMs: number }) {
+function Ruler({ playheadMs, width }: { playheadMs: number; width: number }) {
     const marks: React.ReactNode[] = [];
-    const totalPx = 1200; // simple fixed horizon
-    const seconds = Math.floor(totalPx / 100);
+    const totalPx = Math.max(300, width - 16); // account for padding
+    const seconds = Math.ceil(totalPx / 100);
     for (let s = 0; s <= seconds; s++) {
         const left = s * 100;
-        const strong = s % 5 === 0;
+        const isMajor = s % 5 === 0;
+        const tickHeight = isMajor ? '100%' : '60%';
         marks.push(
-            <div key={s} style={{ position: 'absolute', left, top: 0, height: '100%', width: 1, background: strong ? '#334155' : '#1F2937' }} />,
+            <div key={`tick-${s}`} style={{ position: 'absolute', left, bottom: 0, height: tickHeight, width: 1, background: isMajor ? '#334155' : '#1F2937' }} />,
         );
-        if (strong) {
+        if (isMajor) {
+            const mm = String(Math.floor(s / 60)).padStart(2, '0');
+            const ss = String(s % 60).padStart(2, '0');
             marks.push(
-                <div key={`label-${s}`} style={{ position: 'absolute', left: left + 4, top: 4, fontSize: 10, color: '#9CA3AF' }}>{`${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`}</div>,
+                <div key={`label-${s}`} style={{ position: 'absolute', left: left + 4, top: 4, fontSize: 11, color: '#9CA3AF', textShadow: '0 1px 0 #0B0C10' }}>{`${mm}:${ss}`}</div>,
             );
         }
     }

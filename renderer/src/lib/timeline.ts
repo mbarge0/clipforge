@@ -23,6 +23,7 @@ export interface TimelineState {
     isPlaying: boolean;
     selectedClipId?: string;
     clipboard?: TimelineClip; // used for copy/paste (shallow copy)
+    lastScrubRequestedAt?: number;
 }
 
 export const DEFAULT_TRACKS: TimelineTrack[] = [

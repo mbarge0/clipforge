@@ -207,4 +207,8 @@ Outcome: Ready for integration tests in future pass; no blocking defects.
 
 ---
 
-(End)
+### Post-Build Update (Polish)
+- Added visible focus ring on selected clips.
+- Improved timeline ruler with container-aware labels and clearer major/minor ticks.
+- Implemented sequential preview across Track 1 (auto-advance to next clip).
+- Added lightweight Performance HUD in Preview: FPS and last scrub latency.

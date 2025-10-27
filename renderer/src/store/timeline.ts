@@ -14,6 +14,7 @@ type TimelineActions = {
     copySelection: () => void;
     pasteAt: (ms: Milliseconds) => void;
     undo: () => void;
+    markScrubRequest: (ts: number) => void;
 };
 
 type TimelineStore = TimelineState & TimelineActions & {
@@ -40,6 +41,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     isPlaying: false,
     selectedClipId: undefined,
     clipboard: undefined,
+    lastScrubRequestedAt: undefined,
     _history: [],
     _pushHistory: () => {
         const prev = cloneState({
@@ -48,6 +50,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
             isPlaying: get().isPlaying,
             selectedClipId: get().selectedClipId,
             clipboard: get().clipboard,
+            lastScrubRequestedAt: get().lastScrubRequestedAt,
         });
         const history = [...get()._history, prev].slice(-MAX_HISTORY);
         set({ _history: history });
@@ -182,9 +185,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
             isPlaying: last.isPlaying,
             selectedClipId: last.selectedClipId,
             clipboard: last.clipboard ? { ...last.clipboard } : undefined,
+            lastScrubRequestedAt: last.lastScrubRequestedAt,
             _history: history.slice(0, -1),
         });
     },
+
+    markScrubRequest: (ts) => set({ lastScrubRequestedAt: ts }),
 }));
 
 function sortClipsNonOverlap(clips: TimelineClip[]): TimelineClip[] {
