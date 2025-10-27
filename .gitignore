@@ -1,0 +1,9 @@
+# Node / Electron
+node_modules/
+out/
+make/
+dist/
+.vite/
+*.asar
+*.log
+.DS_Store

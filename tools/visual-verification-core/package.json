@@ -1,0 +1,10 @@
+{
+    "name": "visual-verification-core",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "src/capture.ts",
+    "license": "MIT",
+    "dependencies": {
+        "playwright": "^1.48.0"
+    }
+}

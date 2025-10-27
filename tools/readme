@@ -1,0 +1,13 @@
+# 🧰 Foundry Core Tools
+
+This directory contains shared utilities that every Foundry template inherits.
+
+Each tool should be self-contained, environment-agnostic, and versioned.
+
+Example future tools:
+- `foundry-showcase`
+- `foundry-motion`
+- `evolve-core`
+- `visual-verification-core`
+
+Tools are copied into every project automatically as declared in template.json.
