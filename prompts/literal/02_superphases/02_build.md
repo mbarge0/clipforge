@@ -31,9 +31,9 @@ Generate a regression checklist referencing prior modules and ensure legacy feat
 Implement all code changes directly in the repository using **Coding Rules** as a philosophy. After completing implementation and testing, summarize the changes and store the build report under `/docs/operations/phases/phase-XX-02-build.md.` New work goes into `/docs/operations/phases/recent/`; move completed artifacts together to `/docs/operations/phases/archive/`. If the current supermodule or module does not have a number, assign it the next available phase number from the development checklist. Once you're done implementing, update the **Source of Truth** document.
 
 **System Template references:**  
-- Build Loop Template: `/prompts/system/04_building_loop.md`  
-- UI Review Loop Template: `/prompts/system/05_ui_review_loop.md`  
-- Debugging Loop Template: `/prompts/system/06_debugging_loop.md`  
+- Build Loop Template: `/prompts/system/phases/04_building_loop.md`  
+- UI Review Loop Template: `/prompts/system/phases/05_ui_review_loop.md`  
+- Debugging Loop Template: `/prompts/system/phases/06_debugging_loop.md`  
 
 **Supporting documentation:**   
 - Dev Checklist: `/docs/foundation/dev_checklist.md`  

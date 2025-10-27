@@ -20,5 +20,5 @@ List all resources (code branches, design specs, logs, etc.) that the next phase
 Store the resulting report under `/docs/operations/phases/phase-XX-03-reflect.md`. New work goes into `/docs/operations/phases/recent/`; move completed artifacts together to `/docs/operations/phases/archive/`. If the current supermodule or module does not have a number, assign it the next available phase number from the development checklist.
 
 **System Template references:**  
-- Reflection Loop Template: `/prompts/system/07_reflection_loop.md`  
-- Handoff Loop Template: `/prompts/system/08_context_summary_template.md`
+- Reflection Loop Template: `/prompts/system/phases/07_reflection_loop.md`  
+- Handoff Loop Template: `/prompts/system/phases/08_context_summary_template.md`

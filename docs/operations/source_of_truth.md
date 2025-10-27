@@ -1,5 +1,5 @@
 # Source of Truth  
-_Version 1.1 — Updated for Gauntlet Mode (Oct 2025)_  
+_Version 1.2 — Updated for Gauntlet Mode (Oct 2025)_  
 
 Tracks evolving components, APIs, configurations, and design decisions.  
 Updated weekly or at the end of each phase to prevent confusion about “what’s current.”  
@@ -7,106 +7,99 @@ Acts as the canonical reference for all AI-assisted development.
 
 
 ## 1. Core Technologies
-- **Framework:** Next.js 14 (App Router)  
-- **Database:** Firebase Firestore  
-- **Auth:** Firebase Auth  
-- **AI API:** OpenAI GPT-4o (via `lib/ai/openai.ts`)  
-- **Styling:** Tailwind CSS + shadcn/ui  
-- **Testing:** Jest / React Testing Library  
+- **Framework:** Electron (Main + Preload) + React 18 + Vite  
+- **Language:** TypeScript (renderer) + modern JS (main)  
+- **State:** Local component state now; Zustand planned for Timeline  
+- **Styling:** Inline styles for MVP; Tailwind + tokens planned  
+- **Media:** HTML5 Video + Canvas; FFmpeg (future export/record phases)  
+- **Testing:** Manual QA; Jest/Vitest to be added later  
 
 *Cursor Reference:*  
-Use this section to recall project tech stack before generating new files or updating configuration logic.
+Use this section to recall project stack before generating new files or updating configuration logic.
 
 
 ## 2. Components
 | Category | Path | Description |
 |-----------|------|-------------|
-| Shared UI | `/components/ui/` | Common reusable interface elements |
-| Layout | `/components/layout/` | Page shells, navbars, responsive wrappers |
-| AI Chat | `/components/ai/chat-interface.tsx` | Core interactive chat system |
-| Dashboard | `/components/dashboard/` | Main user workspace views |
-| Auth | `/components/auth/` | Login, signup, session handlers |
-| Utils | `/lib/utils/` | Helper functions and constants |
+| Renderer App | `renderer/src/App.tsx` | Main UI; now includes Media Library import sidebar |
+| Media Utils | `renderer/src/lib/media.ts` | Supported formats, validation, formatting, metadata + thumbnail helpers |
+| Main Process | `main/main.js` | Electron lifecycle, window creation, IPC health check |
+| Preload | `main/preload.ts` | Secure bridge exposing `window.electron.invoke` |
+| Config | `config/*` | Environment and logger utilities |
 
 *Update Rule:*  
-Every time a new major component folder is added or renamed, log it here with one-line context.
+When adding new modules (e.g., Timeline, Export), log the key entry points and responsibilities here.
 
 
-## 3. Endpoints
-| Route | Method | Purpose |
-|--------|---------|----------|
-| `/api/ai/chat` | POST | Handles chat message requests |
-| `/api/auth/signup` | POST | Registers new user |
-| `/api/data/[id]` | GET/POST | CRUD for primary entities |
-| `/api/health` | GET | Health check endpoint for deployment |
-| `/api/test` | GET | Integration testing validation |
+## 3. Endpoints / IPC
+| Channel | Direction | Purpose |
+|---------|-----------|---------|
+| `app:ping` | renderer → main | Health check used to verify preload/IPC bridge |
 
-*Cursor Note:*  
-Each endpoint should include validation middleware and test coverage.  
-If adding new endpoints, Cursor should update this table automatically and validate with a smoke test.
+Note: No new IPC was required for Media Library MVP; all import/metadata operations are renderer-local using browser APIs. File system operations remain in main for future phases.
 
 
 ## 4. Configurations
 | Type | File | Notes |
 |------|------|-------|
-| Env Variables | `.env.local` | Store all secrets here. Never commit. |
-| Model Config | `config/ai.ts` | Defines model version and temperature. |
-| DB Config | `config/database.ts` | Sets Firebase/Supabase client. |
-| Cursor Config | `cursor.config.md` | Defines dev behavior and phase flow. |
+| Electron Window | `main/main.js` | `contextIsolation: true`, `nodeIntegration: false` |
+| Preload Bridge | `main/preload.ts` | Exposes minimal typed `invoke` surface |
+| App Env | `config/environment.ts` | Environment helpers |
+| Logger | `config/logger.ts` | Structured logging helper |
 
 *Reminder:*  
-Always confirm environment variables are loaded correctly before running `pnpm dev`.  
-Cursor should verify configs automatically in new sessions.
+Maintain preload security posture. Add IPC channels deliberately and validate inputs.
 
 
 ## 5. Phase History (Cumulative Log)
 Each phase captures key architectural or design shifts.  
 
-### Phase 0 – Starter Template
-- Initialized Next.js app with Firebase + OpenAI integration.  
-- Basic chat interface connected to `/api/ai/chat`.  
-- Verified environment variable loading.  
+### Phase 01 – Foundation & Setup
+- Secured Electron window (`contextIsolation: true`, `nodeIntegration: false`).  
+- Preload bridge exposed minimal typed `invoke`; IPC health check (`app:ping`).  
+- Dev stability patches for macOS GPU/sandbox in dev only.  
+- Docs: Plan, Build, Reflect stored under `/docs/operations/phases/recent/`.
 
-### Phase 1 – Clone (Enterprise App Example)
-- Replicated baseline enterprise functionality (e.g. Slack clone).  
-- Integrated auth, workspaces, and message persistence.  
-- Defined testing coverage for UI interactions and message flow.  
+### Phase 02 – Media Library & Import (current)
+- Implemented Media Library import in renderer: drag-and-drop + file picker.  
+- Validation: formats (MP4/MOV/WebM) and size ≤ 500MB.  
+- Metadata extraction: duration, resolution; Thumbnail generation via canvas (max width 320px).  
+- UI: Sidebar list with thumbnail, filename, duration, resolution, size; error toasts on invalid files.  
+- No new IPC required; security posture preserved.  
+- Files added/updated:
+  - `renderer/src/lib/media.ts`  
+  - `renderer/src/App.tsx`
 
 *(Add new phases here as they complete.)*
 
 
 ## 6. AI Integration Notes
-- Model: GPT-4o (OpenAI)  
-- Role: backend logic + frontend interaction layer generation  
-- Key files:  
-  - `lib/ai/openai.ts` (core API handler)  
-  - `prompts/system/` (prompt templates for AI collaboration)  
-  - `prompts/literal/` (phase-specific literal prompts)
+- Current phase does not use external AI APIs.  
+- Prompt templates used to organize planning/build/debug under `prompts/system/` and `prompts/literal/`.
 
 *Testing Guideline:*  
-Each AI feature requires at least one mock-response test for validation under Jest or Vitest.
+For MVP, validate manually per PRD checklists. Add unit tests for validators in future.
 
 
 ## 7. Cursor Collaboration Notes
 Cursor should:  
-1. Always review this document at the start of each session.  
-2. Cross-reference changes to ensure accuracy before refactoring.  
-3. Add or update entries automatically after structural changes using the Handoff Loop Template (`/prompts/system/06_handoff_loop.md`).  
-4. Confirm that each endpoint or component logged here has corresponding tests.
+1. Reference this document before planning new work.  
+2. Keep IPC surfaces minimal and typed.  
+3. Prefer renderer DOM APIs for media metadata; defer ffprobe until needed.  
+4. Update this document after each phase with precise file paths and roles.
 
 **Quick Cursor Prompts:**
-- “Update `source_of_truth.md` based on files added in this phase.”  
-- “Scan `/components` and `/api` directories and summarize new or modified items in `source_of_truth.md` format.”  
+- “Update `source_of_truth.md` after completing Media Library phase.”  
+- “Scan `renderer/src/` for new modules and summarize here.”  
 
 
 ## 8. Integration References
-- **Testing Loop Template:** `/prompts/system/06_handoff_loop.md`  
-- **Reflection Loop Template:** `/prompts/system/05_reflection_loop.md`  
-- **Debugging Loop Template:** `/prompts/system/04_debugging_loop.md`  
-
+- **Build Loop Template:** `/prompts/system/phases/04_build_loop.md`  
+- **UI Review Loop Template:** `/prompts/system/phases/05_ui_review_loop.md`  
+- **Debugging Loop Template:** `/prompts/system/phases/06_debugging_loop.md`  
 
 ---
 
 **Summary:**  
-`source_of_truth.md` = single point of alignment between human context and AI memory.  
-It ensures consistency, prevents drift, and lets you and Cursor operate as synchronized engineers.
+`source_of_truth.md` aligns human context and AI memory for ClipForge’s Electron-based architecture.  
+It ensures consistency, prevents drift, and keeps the team synchronized across phases.
