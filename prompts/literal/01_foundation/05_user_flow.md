@@ -10,4 +10,4 @@ Confirm the **target platform(s)** before generating the flow.
 When confirmed, write the result to `/docs/foundation/user_flow.md`.
 **User Flow Loop Template reference**: `/prompts/system/foundation/05_user_flow_loop.md`
 
-PRD is located inside `/docs/foundation` folder.
+Foundation documents located inside `/docs/foundation` folder.

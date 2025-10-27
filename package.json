@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "electron-forge start",
-    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electron .\"",
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electronmon .\"",
     "make": "electron-forge make",
     "pack:mac": "electron-forge make --platform=darwin --arch=arm64,x64",
     "pack:win": "electron-forge make --platform=win32 --arch=x64",
@@ -28,6 +28,7 @@
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
     "electron": "^32.3.3",
+    "electronmon": "^2.0.4",
     "typescript": "^5.3.3",
     "vite": "^5.0.0",
     "wait-on": "^9.0.1"
