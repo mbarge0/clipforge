@@ -158,18 +158,36 @@ export default function App() {
                 showToast('error', `${file.name}: ${validation.reason}`);
                 continue;
             }
+
+            // Try to get a reliable path
+            let filePath = (file as any).path;
+            if (!filePath && window.electron?.invoke) {
+                try {
+                    const result = await window.electron.invoke('media:getPathForFileName', file.name);
+                    if (typeof result === 'string' && result.length > 0) {
+                        filePath = result;
+                        console.log('[media] resolved via IPC', { name: file.name, path: filePath });
+                    }
+                } catch (err) {
+                    console.warn('[media] failed to resolve file path via IPC', err);
+                }
+            }
+
             const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`;
             const base: MediaItemMeta = {
                 id,
                 file,
-                path: (file as any).path,
+                path: filePath,
                 name: file.name,
                 sizeBytes: file.size,
             };
+
+            console.log('[media] add', { id, name: base.name, path: base.path, sizeBytes: base.sizeBytes });
             addItem(base);
+
             try {
                 const meta = await extractVideoMetadataAndThumbnail(file);
-                updateItem(id, { ...meta, path: (file as any).path });
+                updateItem(id, { ...meta, path: filePath });
             } catch {
                 updateItem(id, { error: 'Failed to parse metadata' });
                 showToast('error', `${file.name}: failed to read metadata`);

@@ -54,7 +54,7 @@ export function Timeline({ mediaIndex }: Props) {
                 sourceId,
                 name: media.name,
                 file: media.file,
-                sourcePath: media.path,
+                sourcePath: media.path || (media.file as any)?.path || undefined,
                 startMs,
                 inMs,
                 outMs,
