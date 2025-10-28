@@ -80,6 +80,45 @@ ipcMain.handle('app:ping', async (_event, message) => {
 // ---------------- Export Pipeline IPC ----------------
 const activeJobs = new Map();
 
+// Resolve a file path by name from common locations
+ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
+    try {
+        if (!nameOrPath || typeof nameOrPath !== 'string') {
+            console.log('[media:getPathForFileName]', nameOrPath, '→ not found');
+            return undefined;
+        }
+
+        // 1) Exact (absolute or relative) provided path
+        const asProvided = path.resolve(nameOrPath);
+        if (fs.existsSync(asProvided)) {
+            console.log('[media:getPathForFileName]', nameOrPath, '→', asProvided);
+            return asProvided;
+        }
+
+        // 2) Search common user locations
+        const baseName = path.basename(nameOrPath);
+        const home = os.homedir();
+        const candidates = [
+            path.join(home, 'Downloads', baseName),
+            path.join(home, 'Movies', baseName),
+            path.join(home, 'Documents', baseName),
+            path.join(home, 'Desktop', baseName),
+            path.join(process.cwd(), baseName),
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                console.log('[media:getPathForFileName]', nameOrPath, '→', p);
+                return p;
+            }
+        }
+        console.log('[media:getPathForFileName]', nameOrPath, '→ not found');
+        return undefined;
+    } catch (err) {
+        console.log('[media:getPathForFileName]', nameOrPath, '→ error:', err?.message || err);
+        return undefined;
+    }
+});
+
 ipcMain.handle('export:chooseDestination', async () => {
     const result = await dialog.showSaveDialog({
         title: 'Choose export destination',
@@ -99,6 +138,10 @@ ipcMain.handle('export:start', async (event, payload) => {
     if (!destinationPath) throw new Error('No destination path');
 
     ffmpeg.setFfmpegPath(ffmpegPath);
+
+    const absOutputPath = path.resolve(String(destinationPath));
+    console.log(`[export ${jobId}] outputPath (abs):`, absOutputPath);
+    console.log(`[export ${jobId}] cwd:`, process.cwd());
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-export-'));
     const tempSegments = [];
@@ -137,10 +180,10 @@ ipcMain.handle('export:start', async (event, payload) => {
                 const proc = ffmpeg()
                     .input(s.filePath)
                     .inputOptions([`-ss ${s.inMs / 1000}`])
-                    .outputOptions(['-t ' + durationSec])
+                    .outputOptions(['-t', String(durationSec), '-y'])
                     .videoCodec('libx264')
                     .audioCodec('aac')
-                    .outputOptions(['-pix_fmt yuv420p'])
+                    .outputOptions(['-pix_fmt', 'yuv420p'])
                     .videoFilters(scaleFilterFor(resolution))
                     .on('start', () => {
                         activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
@@ -170,19 +213,27 @@ ipcMain.handle('export:start', async (event, payload) => {
         await new Promise((resolve, reject) => {
             const proc = ffmpeg()
                 .input(listPath)
-                .inputOptions(['-f concat', '-safe 0'])
-                .outputOptions(['-c copy'])
+                .inputOptions(['-f', 'concat', '-safe', '0'])
+                .outputOptions(['-c', 'copy', '-y'])
                 .on('start', () => {
                     activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
                     emitProgress(99, 'finalizing');
                 })
                 .on('error', (err) => reject(err))
                 .on('end', () => resolve(null))
-                .save(destinationPath);
+                .save(absOutputPath);
         });
 
+        const exists = fs.existsSync(absOutputPath);
+        console.log(`[export ${jobId}] write complete: exists=${exists} path=${absOutputPath}`);
+        if (!exists) {
+            console.error(`[export ${jobId}] expected output missing. cwd=${process.cwd()}`);
+            try { event.sender.send('export:complete', { jobId, success: false, error: 'output_missing', outputPath: absOutputPath }); } catch { }
+            return { jobId };
+        }
+
         emitProgress(100, 'done', 0);
-        try { event.sender.send('export:complete', { jobId, success: true, outputPath: destinationPath }); } catch { }
+        try { event.sender.send('export:complete', { jobId, success: true, outputPath: absOutputPath }); } catch { }
     } catch (err) {
         if (String(err?.message || err) === 'CANCELLED') {
             try { event.sender.send('export:complete', { jobId, success: false, error: 'cancelled' }); } catch { }
