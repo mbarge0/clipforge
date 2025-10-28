@@ -16,6 +16,8 @@ import { useTimelineStore } from './store/timeline';
 type Toast = { id: string; kind: 'error' | 'info' | 'success'; message: string };
 
 export default function App() {
+    const electron = (window as any).electron;
+
     const [pong, setPong] = React.useState<string>('');
     const items = useMediaStore((s) => s.items);
     const addItem = useMediaStore((s) => s.addItem);
@@ -33,7 +35,9 @@ export default function App() {
     const pasteAt = useTimelineStore((s) => s.pasteAt);
     const selectedClipId = useTimelineStore((s) => s.selectedClipId);
     const tracks = useTimelineStore((s) => s.tracks);
-    const clipsSourceIds = useTimelineStore((s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId))));
+    const clipsSourceIds = useTimelineStore(
+        (s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId)))
+    );
 
     // Export UI state
     const [showExport, setShowExport] = React.useState(false);
@@ -46,14 +50,19 @@ export default function App() {
     const mediaIndex = React.useMemo(() => Object.fromEntries(items.map((it) => [it.id, it])), [items]);
 
     React.useEffect(() => {
-        try { (window as any).__MEDIA_DEBUG__ = items; } catch { }
+        try {
+            (window as any).__MEDIA_DEBUG__ = items;
+        } catch {
+            // ignore
+        }
     }, [items]);
 
+    // --- IPC Health Check ---
     React.useEffect(() => {
         let cancelled = false;
-        window.electron
+        electron
             ?.invoke('app:ping', 'hello')
-            .then((res) => {
+            .then((res: string) => {
                 if (!cancelled) setPong(res);
             })
             .catch(() => {
@@ -64,13 +73,14 @@ export default function App() {
         };
     }, []);
 
+    // --- Export Progress Listeners ---
     React.useEffect(() => {
-        const offProg = window.electron?.onExportProgress?.((_evt, data) => {
+        const offProg = electron?.onExportProgress?.((_evt: unknown, data: { jobId: string; percent: number; status?: string }) => {
             if (data.jobId !== exportJobId) return;
             setExportProgress(Math.max(0, Math.min(100, data.percent)));
             if (data.status) setExportStatus(data.status);
         });
-        const offDone = window.electron?.onExportComplete?.((_evt, data) => {
+        const offDone = electron?.onExportComplete?.((_evt: unknown, data: { jobId: string; success: boolean; outputPath?: string; error?: string }) => {
             if (data.jobId !== exportJobId) return;
             if (data.success) {
                 showToast('success', 'Export complete');
@@ -92,6 +102,7 @@ export default function App() {
         };
     }, [exportJobId]);
 
+    // --- Keyboard Shortcuts ---
     React.useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
             const meta = e.ctrlKey || e.metaKey;
@@ -105,7 +116,7 @@ export default function App() {
                 deleteSelection();
                 return;
             }
-            if (meta && (e.key.toLowerCase() === 'z')) {
+            if (meta && e.key.toLowerCase() === 'z') {
                 e.preventDefault();
                 undo();
                 return;
@@ -136,6 +147,7 @@ export default function App() {
         setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
     }
 
+    // --- File Handling ---
     async function handleFiles(files: FileList | File[]) {
         const fileArray = Array.from(files);
         for (const file of fileArray) {
@@ -144,9 +156,7 @@ export default function App() {
                 showToast('error', `${file.name}: ${validation.reason}`);
                 continue;
             }
-            const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random()
-                .toString(36)
-                .slice(2)}`;
+            const id = `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`;
             const base: MediaItemMeta = {
                 id,
                 file,
@@ -154,13 +164,11 @@ export default function App() {
                 name: file.name,
                 sizeBytes: file.size,
             };
-            console.log('[media] add', { id, name: base.name, path: base.path, sizeBytes: base.sizeBytes });
             addItem(base);
             try {
                 const meta = await extractVideoMetadataAndThumbnail(file);
-                updateItem(id, { ...meta });
-                console.log('[media] updated meta', { id, ...meta });
-            } catch (e: any) {
+                updateItem(id, { ...meta, path: (file as any).path });
+            } catch {
                 updateItem(id, { error: 'Failed to parse metadata' });
                 showToast('error', `${file.name}: failed to read metadata`);
             }
@@ -174,16 +182,45 @@ export default function App() {
             void handleFiles(e.dataTransfer.files);
         }
     }
+
     function onDragOver(e: React.DragEvent) {
         e.preventDefault();
         setIsDragging(true);
     }
+
     function onDragLeave(e: React.DragEvent) {
         e.preventDefault();
         setIsDragging(false);
     }
 
-    function openPicker() {
+    async function openPicker() {
+        // Try IPC-based import if implemented; otherwise fallback to hidden input
+        try {
+            const picked = await electron?.invoke?.('media:import');
+            if (picked && picked.length) {
+                for (const item of picked) {
+                    const filePath = item.path;
+                    const fileName = item.name;
+                    const fakeFile = new File([], fileName);
+                    const id = `${fileName}-${item.size}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                    const base: MediaItemMeta = {
+                        id,
+                        file: fakeFile,
+                        path: filePath,
+                        name: fileName,
+                        sizeBytes: item.size,
+                    };
+                    addItem(base);
+                    try {
+                        const meta = await electron?.invoke?.('media:getMetadata', filePath);
+                        if (meta) updateItem(id, { ...meta, path: filePath });
+                    } catch {
+                        updateItem(id, { error: 'Failed to read metadata', path: filePath });
+                    }
+                }
+                return;
+            }
+        } catch { }
         inputRef.current?.click();
     }
 
@@ -202,12 +239,24 @@ export default function App() {
     const dropBorder = isDragging ? '#6E56CF' : '#2A2A31';
     const dropBg = isDragging ? 'rgba(110, 86, 207, 0.08)' : 'transparent';
 
+    // --- UI Render ---
     return (
         <div style={{ padding: 16, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system' }}>
-            <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 12, borderBottom: '1px solid #2A2A31' }}>
+            {/* HEADER */}
+            <header
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingBottom: 12,
+                    borderBottom: '1px solid #2A2A31',
+                }}
+            >
                 <div>
                     <h1 style={{ fontSize: 20, margin: 0 }}>🎬 ClipForge Desktop</h1>
-                    <p style={{ margin: 0, color: '#9CA3AF' }}>IPC health: <strong>{pong || '...'}</strong></p>
+                    <p style={{ margin: 0, color: '#9CA3AF' }}>
+                        IPC health: <strong>{pong || '...'}</strong>
+                    </p>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button
@@ -220,7 +269,6 @@ export default function App() {
                             padding: '8px 12px',
                             cursor: 'pointer',
                         }}
-                        aria-label="Import files"
                     >
                         Import
                     </button>
@@ -234,7 +282,6 @@ export default function App() {
                             padding: '8px 12px',
                             cursor: 'pointer',
                         }}
-                        aria-label="Open export dialog"
                     >
                         Export
                     </button>
@@ -249,6 +296,7 @@ export default function App() {
                 />
             </header>
 
+            {/* MAIN */}
             <main style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, marginTop: 16 }}>
                 <aside>
                     <h3 style={{ marginTop: 0, fontSize: 16 }}>Media Library</h3>
@@ -259,7 +307,7 @@ export default function App() {
                         role="button"
                         tabIndex={0}
                         onClick={openPicker}
-                        onKeyDown={(e) => (e.key === 'Enter' ? openPicker() : undefined)}
+                        onKeyDown={(e) => e.key === 'Enter' && openPicker()}
                         style={{
                             border: `2px dashed ${dropBorder}`,
                             background: dropBg,
@@ -270,47 +318,110 @@ export default function App() {
                             cursor: 'pointer',
                             outline: 'none',
                         }}
-                        aria-label="Drag files here or press Enter to pick"
                     >
                         <div style={{ marginBottom: 8, color: '#9CA3AF' }}>Drag files here</div>
                         <div style={{ fontSize: 12, color: '#9CA3AF' }}>
-                            Supported: {SUPPORTED_EXTENSIONS.join(', ').toUpperCase()} • Max {formatBytes(MAX_FILE_BYTES)}
+                            Supported: {SUPPORTED_EXTENSIONS.join(', ').toUpperCase()} • Max{' '}
+                            {formatBytes(MAX_FILE_BYTES)}
                         </div>
                     </div>
 
+                    {/* Media Items */}
                     <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
                         {items.length === 0 ? (
-                            <div style={{ color: '#9CA3AF', fontSize: 14 }}>No media yet. Import to get started.</div>
+                            <div style={{ color: '#9CA3AF', fontSize: 14 }}>
+                                No media yet. Import to get started.
+                            </div>
                         ) : (
                             items.map((item) => (
-                                <div key={item.id} draggable onDragStart={(e) => onLibDragStart(e, item.id)} style={{ display: 'grid', gridTemplateColumns: '96px 1fr', gap: 12, border: '1px solid #2A2A31', borderRadius: 8, padding: 8, background: '#18181C' }}>
-                                    <div style={{ width: 96, height: 54, background: '#0B0B0D', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <div
+                                    key={item.id}
+                                    draggable
+                                    onDragStart={(e) => onLibDragStart(e, item.id)}
+                                    style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '96px 1fr',
+                                        gap: 12,
+                                        border: '1px solid #2A2A31',
+                                        borderRadius: 8,
+                                        padding: 8,
+                                        background: '#18181C',
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            width: 96,
+                                            height: 54,
+                                            background: '#0B0B0D',
+                                            borderRadius: 6,
+                                            overflow: 'hidden',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                        }}
+                                    >
                                         {item.thumbnailDataUrl ? (
-                                            <img src={item.thumbnailDataUrl} alt="thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            <img
+                                                src={item.thumbnailDataUrl}
+                                                alt="thumbnail"
+                                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                            />
                                         ) : (
                                             <span style={{ color: '#9CA3AF', fontSize: 12 }}>thumb</span>
                                         )}
                                     </div>
                                     <div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <strong style={{ fontSize: 14, color: '#E5E7EB', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</strong>
-                                            {clipsSourceIds.has(item.id) ? (
-                                                <span style={{ fontSize: 10, color: '#6E56CF', border: '1px solid #6E56CF', borderRadius: 999, padding: '0 6px' }}>on timeline</span>
-                                            ) : null}
+                                            <strong
+                                                style={{
+                                                    fontSize: 14,
+                                                    color: '#E5E7EB',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                {item.name}
+                                            </strong>
+                                            {clipsSourceIds.has(item.id) && (
+                                                <span
+                                                    style={{
+                                                        fontSize: 10,
+                                                        color: '#6E56CF',
+                                                        border: '1px solid #6E56CF',
+                                                        borderRadius: 999,
+                                                        padding: '0 6px',
+                                                    }}
+                                                >
+                                                    on timeline
+                                                </span>
+                                            )}
                                         </div>
                                         <div style={{ color: '#9CA3AF', fontSize: 12, marginTop: 4 }}>
-                                            {item.durationMs != null ? formatDuration(item.durationMs) : '—'}
-                                            {' • '}
-                                            {item.width && item.height ? `${item.width}×${item.height}` : '—'}
-                                            {' • '}
-                                            {formatBytes(item.sizeBytes)}
+                                            {item.durationMs != null ? formatDuration(item.durationMs) : '—'} •{' '}
+                                            {item.width && item.height
+                                                ? `${item.width}×${item.height}`
+                                                : '—'} • {formatBytes(item.sizeBytes)}
                                         </div>
-                                        {item.path ? (
-                                            <div style={{ color: '#6B7280', fontSize: 11, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.path}</div>
-                                        ) : null}
-                                        {item.error ? (
-                                            <div style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>{item.error}</div>
-                                        ) : null}
+                                        {item.path && (
+                                            <div
+                                                style={{
+                                                    color: '#6B7280',
+                                                    fontSize: 11,
+                                                    marginTop: 4,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}
+                                            >
+                                                {item.path}
+                                            </div>
+                                        )}
+                                        {item.error && (
+                                            <div style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
+                                                {item.error}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))
@@ -318,6 +429,7 @@ export default function App() {
                     </div>
                 </aside>
 
+                {/* TIMELINE + PREVIEW */}
                 <section>
                     <div style={{ display: 'grid', gap: 12 }}>
                         <Preview mediaIndex={mediaIndex} />
@@ -326,7 +438,6 @@ export default function App() {
                 </section>
             </main>
 
-            {/* Export Dialog */}
             {showExport ? (
                 <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ background: '#0B0C10', border: '1px solid #374151', borderRadius: 12, padding: 16, width: 420 }}>
@@ -347,7 +458,7 @@ export default function App() {
                             <div style={{ display: 'flex', gap: 8 }}>
                                 <input readOnly value={destinationPath ?? ''} placeholder="Choose path…" style={{ flex: 1, background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px' }} />
                                 <button onClick={async () => {
-                                    const p = await window.electron?.exportChooseDestination?.('export.mp4');
+                                    const p = await electron?.exportChooseDestination?.('export.mp4');
                                     if (p) setDestinationPath(p);
                                 }}
                                     style={{ background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}>Choose</button>
@@ -355,7 +466,7 @@ export default function App() {
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
                             {exportJobId ? (
-                                <button onClick={async () => { if (exportJobId) await window.electron?.exportCancel?.(exportJobId); }}
+                                <button onClick={async () => { if (exportJobId) await electron?.exportCancel?.(exportJobId); }}
                                     style={{ background: '#B91C1C', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}>Cancel</button>
                             ) : (
                                 <button
@@ -371,7 +482,7 @@ export default function App() {
                                         }
                                         if (segments.length === 0) { showToast('error', 'Timeline is empty'); return; }
                                         try {
-                                            const res = await window.electron?.exportStart?.({ resolution, destinationPath, segments });
+                                            const res = await electron?.exportStart?.({ resolution, destinationPath, segments });
                                             if (res?.jobId) setExportJobId(res.jobId);
                                         } catch (e: any) {
                                             showToast('error', 'Failed to start export');
@@ -399,16 +510,34 @@ export default function App() {
                 </div>
             ) : null}
 
-            {/* Toasts */}
-            <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'grid', gap: 8 }}>
+            {/* TOASTS */}
+            <div
+                style={{
+                    position: 'fixed',
+                    bottom: 16,
+                    right: 16,
+                    display: 'grid',
+                    gap: 8,
+                }}
+            >
                 {toasts.map((t) => (
                     <div
                         key={t.id}
                         role="status"
                         style={{
-                            background: t.kind === 'error' ? '#2A0F12' : t.kind === 'success' ? '#0F2A19' : '#111827',
+                            background:
+                                t.kind === 'error'
+                                    ? '#2A0F12'
+                                    : t.kind === 'success'
+                                        ? '#0F2A19'
+                                        : '#111827',
                             color: '#E5E7EB',
-                            border: `1px solid ${t.kind === 'error' ? '#B91C1C' : t.kind === 'success' ? '#15803D' : '#374151'}`,
+                            border: `1px solid ${t.kind === 'error'
+                                ? '#B91C1C'
+                                : t.kind === 'success'
+                                    ? '#15803D'
+                                    : '#374151'
+                                }`,
                             borderRadius: 8,
                             padding: '10px 12px',
                             minWidth: 240,
@@ -422,11 +551,14 @@ export default function App() {
     );
 }
 
+/** --- Helper for export segment building --- */
 function buildExportSegments(
     tracks: ReturnType<typeof useTimelineStore.getState>['tracks'],
-    mediaIndex: Record<string, MediaItemMeta>,
+    mediaIndex: Record<string, MediaItemMeta>
 ): Array<{ filePath: string; inMs: number; outMs: number }> {
-    const clips = tracks.flatMap((t, idx) => t.clips.map((c) => ({ trackIndex: idx, clip: c })));
+    const clips = tracks.flatMap((t, idx) =>
+        t.clips.map((c) => ({ trackIndex: idx, clip: c }))
+    );
     if (clips.length === 0) return [];
     const boundaries = new Set<number>();
     for (const { clip } of clips) {
@@ -454,8 +586,8 @@ function buildExportSegments(
         const filePath = indexPath || candidatePath;
         if (!filePath) {
             console.warn('[export] clip has no file path', { sourceId: c.sourceId, indexPath, candidatePath, name: c.name });
+            continue;
         }
-        if (!filePath) continue;
         const relIn = c.inMs + (a - c.startMs);
         const relOut = relIn + (b - a);
         segments.push({ filePath, inMs: relIn, outMs: relOut });

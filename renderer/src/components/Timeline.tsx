@@ -48,7 +48,16 @@ export function Timeline({ mediaIndex }: Props) {
         startMs = snapMs(startMs);
         const inMs = 0;
         const outMs = media.durationMs;
-        addClip({ sourceId, name: media.name, file: media.file, startMs, inMs, outMs, trackId });
+        addClip({
+            sourceId,
+            name: media.name,
+            file: media.file,
+            sourcePath: media.path, // ✅ preserve filesystem path
+            startMs,
+            inMs,
+            outMs,
+            trackId,
+        });
     }
 
     function onDragOver(e: React.DragEvent) {
