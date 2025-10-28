@@ -9,6 +9,7 @@ export interface TimelineClip {
     inMs: Milliseconds; // trim in within source
     outMs: Milliseconds; // trim out within source (exclusive)
     trackId: string;
+    sourcePath?: string;
 }
 
 export interface TimelineTrack {

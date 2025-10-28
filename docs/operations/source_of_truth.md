@@ -27,8 +27,8 @@ Use this section to recall project stack before generating new files or updating
 | Timeline Store | `renderer/src/store/timeline.ts` | Zustand store: add/trim/split/move/delete, undo, copy/paste, playhead |
 | Timeline UI | `renderer/src/components/Timeline.tsx` | Ruler, tracks, clip blocks, DnD, trim/move/select |
 | Preview UI | `renderer/src/components/Preview.tsx` | Selected-clip preview; play/pause and playhead sync |
-| Main Process | `main/main.js` | Electron lifecycle, window creation, IPC health check |
-| Preload | `main/preload.ts` | Secure bridge exposing `window.electron.invoke` |
+| Main Process | `main/main.js` | Electron lifecycle, window creation, Export IPC + runner |
+| Preload | `main/preload.ts` | Secure bridge exposing `window.electron` (ping + export APIs) |
 | Config | `config/*` | Environment and logger utilities |
 
 *Update Rule:*  
@@ -39,6 +39,11 @@ When adding new modules (e.g., Timeline, Export), log the key entry points and r
 | Channel | Direction | Purpose |
 |---------|-----------|---------|
 | `app:ping` | renderer → main | Health check used to verify preload/IPC bridge |
+| `export:chooseDestination` | renderer → main | Open OS save dialog and return chosen MP4 path |
+| `export:start` | renderer → main | Begin export job with `{ resolution, destinationPath, segments[] }` |
+| `export:progress` | main → renderer | Progress events `{ jobId, percent, status }` ≥ 1/sec-equivalent |
+| `export:complete` | main → renderer | Completion event `{ jobId, success, outputPath? | error? }` |
+| `export:cancel` | renderer → main | Cancel active export job, terminates ffmpeg and cleans temps |
 
 Note: No new IPC was required for Media Library MVP; all import/metadata operations are renderer-local using browser APIs. File system operations remain in main for future phases.
 
@@ -87,6 +92,15 @@ Each phase captures key architectural or design shifts.
   - `renderer/src/components/Timeline.tsx`
   - `renderer/src/components/Preview.tsx`
   - `renderer/src/App.tsx`
+
+### Phase 04 – Export Pipeline
+- Renderer planner flattens two-track timeline into linear segments honoring Track 1 priority.
+- Main runner (fluent-ffmpeg + ffmpeg-static) trims and re-encodes segments (720p/1080p/Source), then concatenates via demuxer.
+- Progress and cancel implemented; UI dialog in `renderer/src/App.tsx`.
+- Files added/updated:
+  - `main/main.js` (Export IPC + runner)
+  - `main/preload.ts` (export APIs)
+  - `renderer/src/App.tsx` (Export UI + planner)
 
 
 ## 6. AI Integration Notes

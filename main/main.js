@@ -1,4 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import ffmpegPath from 'ffmpeg-static';
+import ffmpeg from 'fluent-ffmpeg';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -71,4 +75,188 @@ app.on('window-all-closed', () => {
 // --- IPC Bridge Test (health check) ---
 ipcMain.handle('app:ping', async (_event, message) => {
     return `pong:${message ?? ''}`;
+});
+
+// ---------------- Export Pipeline IPC ----------------
+const activeJobs = new Map();
+
+// Resolve a file path by name from common locations
+ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
+    try {
+        if (!nameOrPath || typeof nameOrPath !== 'string') {
+            console.log('[media:getPathForFileName]', nameOrPath, '→ not found');
+            return undefined;
+        }
+
+        // 1) Exact (absolute or relative) provided path
+        const asProvided = path.resolve(nameOrPath);
+        if (fs.existsSync(asProvided)) {
+            console.log('[media:getPathForFileName]', nameOrPath, '→', asProvided);
+            return asProvided;
+        }
+
+        // 2) Search common user locations
+        const baseName = path.basename(nameOrPath);
+        const home = os.homedir();
+        const candidates = [
+            path.join(home, 'Downloads', baseName),
+            path.join(home, 'Movies', baseName),
+            path.join(home, 'Documents', baseName),
+            path.join(home, 'Desktop', baseName),
+            path.join(process.cwd(), baseName),
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                console.log('[media:getPathForFileName]', nameOrPath, '→', p);
+                return p;
+            }
+        }
+        console.log('[media:getPathForFileName]', nameOrPath, '→ not found');
+        return undefined;
+    } catch (err) {
+        console.log('[media:getPathForFileName]', nameOrPath, '→ error:', err?.message || err);
+        return undefined;
+    }
+});
+
+ipcMain.handle('export:chooseDestination', async () => {
+    const result = await dialog.showSaveDialog({
+        title: 'Choose export destination',
+        defaultPath: path.join(os.homedir(), 'Movies', 'export.mp4'),
+        filters: [{ name: 'MP4', extensions: ['mp4'] }],
+    });
+    if (result.canceled) return undefined;
+    return result.filePath;
+});
+
+ipcMain.handle('export:start', async (event, payload) => {
+    const jobId = payload.jobId ?? `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const { resolution, destinationPath, segments } = payload;
+    if (!Array.isArray(segments) || segments.length === 0) {
+        throw new Error('No segments provided');
+    }
+    if (!destinationPath) throw new Error('No destination path');
+
+    ffmpeg.setFfmpegPath(ffmpegPath);
+
+    const absOutputPath = path.resolve(String(destinationPath));
+    console.log(`[export ${jobId}] outputPath (abs):`, absOutputPath);
+    console.log(`[export ${jobId}] cwd:`, process.cwd());
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-export-'));
+    const tempSegments = [];
+    let cancelled = false;
+    activeJobs.set(jobId, {
+        cancel: () => {
+            cancelled = true;
+            const cur = activeJobs.get(jobId)?.currentProc;
+            try { cur && cur.kill('SIGKILL'); } catch { }
+        },
+    });
+
+    const totalDurationMs = segments.reduce((acc, s) => acc + Math.max(0, s.outMs - s.inMs), 0);
+    let completedMs = 0;
+
+    function emitProgress(percent, status, etaSeconds) {
+        try { event.sender.send('export:progress', { jobId, percent, status, etaSeconds }); } catch { }
+    }
+
+    // Helper to make scaled size option
+    function scaleFilterFor(res) {
+        if (res === '720p') return 'scale=1280:720:flags=bicubic,setsar=1';
+        if (res === '1080p') return 'scale=1920:1080:flags=bicubic,setsar=1';
+        return 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1'; // source-ish, normalizing even dims
+    }
+
+    try {
+        // 1) Generate uniform segments
+        for (let i = 0; i < segments.length; i++) {
+            if (cancelled) throw new Error('CANCELLED');
+            const s = segments[i];
+            const tmpOut = path.join(tempDir, `seg-${String(i).padStart(3, '0')}.mp4`);
+            tempSegments.push(tmpOut);
+            const durationSec = Math.max(0, (s.outMs - s.inMs) / 1000);
+            await new Promise((resolve, reject) => {
+                const proc = ffmpeg()
+                    .input(s.filePath)
+                    .inputOptions([`-ss ${s.inMs / 1000}`])
+                    .outputOptions(['-t', String(durationSec), '-y'])
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .outputOptions(['-pix_fmt', 'yuv420p'])
+                    .videoFilters(scaleFilterFor(resolution))
+                    .on('start', () => {
+                        activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
+                        emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoding segment ${i + 1}/${segments.length}`);
+                    })
+                    .on('progress', (p) => {
+                        const framesTime = p.timemark || '0:00:00.00';
+                        // cannot precisely parse timemark to ms here without utility; progress per segment is fine
+                    })
+                    .on('error', (err) => reject(err))
+                    .on('end', () => {
+                        completedMs += Math.max(0, s.outMs - s.inMs);
+                        emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoded ${i + 1}/${segments.length}`);
+                        resolve(null);
+                    })
+                    .save(tmpOut);
+            });
+        }
+
+        if (cancelled) throw new Error('CANCELLED');
+
+        // 2) Concat demuxer
+        const listPath = path.join(tempDir, 'concat_list.txt');
+        const listContent = tempSegments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+        fs.writeFileSync(listPath, listContent, 'utf8');
+
+        await new Promise((resolve, reject) => {
+            const proc = ffmpeg()
+                .input(listPath)
+                .inputOptions(['-f', 'concat', '-safe', '0'])
+                .outputOptions(['-c', 'copy', '-y'])
+                .on('start', () => {
+                    activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
+                    emitProgress(99, 'finalizing');
+                })
+                .on('error', (err) => reject(err))
+                .on('end', () => resolve(null))
+                .save(absOutputPath);
+        });
+
+        const exists = fs.existsSync(absOutputPath);
+        console.log(`[export ${jobId}] write complete: exists=${exists} path=${absOutputPath}`);
+        if (!exists) {
+            console.error(`[export ${jobId}] expected output missing. cwd=${process.cwd()}`);
+            try { event.sender.send('export:complete', { jobId, success: false, error: 'output_missing', outputPath: absOutputPath }); } catch { }
+            return { jobId };
+        }
+
+        emitProgress(100, 'done', 0);
+        try { event.sender.send('export:complete', { jobId, success: true, outputPath: absOutputPath }); } catch { }
+    } catch (err) {
+        if (String(err?.message || err) === 'CANCELLED') {
+            try { event.sender.send('export:complete', { jobId, success: false, error: 'cancelled' }); } catch { }
+        } else {
+            try { event.sender.send('export:complete', { jobId, success: false, error: String(err?.message || err) }); } catch { }
+        }
+    } finally {
+        // cleanup
+        for (const p of tempSegments) {
+            try { fs.existsSync(p) && fs.unlinkSync(p); } catch { }
+        }
+        try { fs.existsSync(path.join(tempDir, 'concat_list.txt')) && fs.unlinkSync(path.join(tempDir, 'concat_list.txt')); } catch { }
+        try { fs.rmdirSync(tempDir); } catch { }
+        activeJobs.delete(jobId);
+    }
+
+    return { jobId };
+});
+
+ipcMain.handle('export:cancel', async (_event, jobId) => {
+    const job = activeJobs.get(jobId);
+    if (job) {
+        try { job.cancel(); return true; } catch { return false; }
+    }
+    return false;
 });
