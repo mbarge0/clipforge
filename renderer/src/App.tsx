@@ -29,7 +29,16 @@ export default function App() {
     const copySelection = useTimelineStore((s) => s.copySelection);
     const pasteAt = useTimelineStore((s) => s.pasteAt);
     const selectedClipId = useTimelineStore((s) => s.selectedClipId);
+    const tracks = useTimelineStore((s) => s.tracks);
     const clipsSourceIds = useTimelineStore((s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId))));
+
+    // Export UI state
+    const [showExport, setShowExport] = React.useState(false);
+    const [resolution, setResolution] = React.useState<'720p' | '1080p' | 'source'>('1080p');
+    const [destinationPath, setDestinationPath] = React.useState<string | undefined>(undefined);
+    const [exportJobId, setExportJobId] = React.useState<string | undefined>(undefined);
+    const [exportProgress, setExportProgress] = React.useState<number>(0);
+    const [exportStatus, setExportStatus] = React.useState<string>('');
 
     const mediaIndex = React.useMemo(() => Object.fromEntries(items.map((it) => [it.id, it])), [items]);
 
@@ -47,6 +56,34 @@ export default function App() {
             cancelled = true;
         };
     }, []);
+
+    React.useEffect(() => {
+        const offProg = window.electron?.onExportProgress?.((_evt, data) => {
+            if (data.jobId !== exportJobId) return;
+            setExportProgress(Math.max(0, Math.min(100, data.percent)));
+            if (data.status) setExportStatus(data.status);
+        });
+        const offDone = window.electron?.onExportComplete?.((_evt, data) => {
+            if (data.jobId !== exportJobId) return;
+            if (data.success) {
+                showToast('success', 'Export complete');
+            } else {
+                if (data.error === 'cancelled') {
+                    showToast('info', 'Export cancelled');
+                } else {
+                    showToast('error', 'Export failed: ' + (data.error ?? 'Unknown error'));
+                }
+            }
+            setExportJobId(undefined);
+            setExportProgress(0);
+            setExportStatus('');
+            setShowExport(false);
+        });
+        return () => {
+            offProg && offProg();
+            offDone && offDone();
+        };
+    }, [exportJobId]);
 
     React.useEffect(() => {
         function onKeyDown(e: KeyboardEvent) {
@@ -165,20 +202,36 @@ export default function App() {
                     <h1 style={{ fontSize: 20, margin: 0 }}>🎬 ClipForge Desktop</h1>
                     <p style={{ margin: 0, color: '#9CA3AF' }}>IPC health: <strong>{pong || '...'}</strong></p>
                 </div>
-                <button
-                    onClick={openPicker}
-                    style={{
-                        background: '#6E56CF',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: 8,
-                        padding: '8px 12px',
-                        cursor: 'pointer',
-                    }}
-                    aria-label="Import files"
-                >
-                    Import
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                        onClick={openPicker}
+                        style={{
+                            background: '#6E56CF',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 8,
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                        }}
+                        aria-label="Import files"
+                    >
+                        Import
+                    </button>
+                    <button
+                        onClick={() => setShowExport(true)}
+                        style={{
+                            background: '#0EA5E9',
+                            color: '#0B0C10',
+                            border: 'none',
+                            borderRadius: 8,
+                            padding: '8px 12px',
+                            cursor: 'pointer',
+                        }}
+                        aria-label="Open export dialog"
+                    >
+                        Export
+                    </button>
+                </div>
                 <input
                     ref={inputRef}
                     type="file"
@@ -266,6 +319,72 @@ export default function App() {
                 </section>
             </main>
 
+            {/* Export Dialog */}
+            {showExport ? (
+                <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ background: '#0B0C10', border: '1px solid #374151', borderRadius: 12, padding: 16, width: 420 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <strong style={{ color: '#E5E7EB' }}>Export Video</strong>
+                            <button onClick={() => (exportJobId ? undefined : setShowExport(false))} aria-label="Close"
+                                style={{ background: 'transparent', color: '#9CA3AF', border: 'none', cursor: exportJobId ? 'not-allowed' : 'pointer' }}>✕</button>
+                        </div>
+                        <div style={{ marginTop: 12, display: 'grid', gap: 12 }}>
+                            <label style={{ color: '#9CA3AF', fontSize: 12 }}>Resolution</label>
+                            <select value={resolution} onChange={(e) => setResolution(e.target.value as any)}
+                                style={{ background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px' }}>
+                                <option value="720p">720p</option>
+                                <option value="1080p">1080p</option>
+                                <option value="source">Source</option>
+                            </select>
+                            <label style={{ color: '#9CA3AF', fontSize: 12 }}>Destination</label>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <input readOnly value={destinationPath ?? ''} placeholder="Choose path…" style={{ flex: 1, background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px' }} />
+                                <button onClick={async () => {
+                                    const p = await window.electron?.exportChooseDestination?.('export.mp4');
+                                    if (p) setDestinationPath(p);
+                                }}
+                                    style={{ background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}>Choose</button>
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+                            {exportJobId ? (
+                                <button onClick={async () => { if (exportJobId) await window.electron?.exportCancel?.(exportJobId); }}
+                                    style={{ background: '#B91C1C', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}>Cancel</button>
+                            ) : (
+                                <button
+                                    onClick={async () => {
+                                        if (!destinationPath) { showToast('error', 'Choose destination'); return; }
+                                        const segments = buildExportSegments(tracks);
+                                        if (segments.length === 0) { showToast('error', 'Timeline is empty'); return; }
+                                        try {
+                                            const res = await window.electron?.exportStart?.({ resolution, destinationPath, segments });
+                                            if (res?.jobId) setExportJobId(res.jobId);
+                                        } catch (e: any) {
+                                            showToast('error', 'Failed to start export');
+                                        }
+                                    }}
+                                    style={{ background: destinationPath ? '#0EA5E9' : '#1F2937', color: '#0B0C10', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: destinationPath ? 'pointer' : 'not-allowed' }}
+                                    aria-label="Start export"
+                                    disabled={!destinationPath}
+                                >
+                                    Export
+                                </button>
+                            )}
+                        </div>
+
+                        {exportJobId ? (
+                            <div style={{ marginTop: 16 }}>
+                                <div style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 6 }}>{exportStatus || 'Exporting…'}</div>
+                                <div style={{ height: 10, background: '#111827', border: '1px solid #374151', borderRadius: 999, overflow: 'hidden' }}>
+                                    <div style={{ width: `${exportProgress}%`, height: '100%', background: '#0EA5E9' }} />
+                                </div>
+                                <div style={{ color: '#E5E7EB', fontSize: 12, marginTop: 6 }}>{Math.round(exportProgress)}%</div>
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            ) : null}
+
             {/* Toasts */}
             <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'grid', gap: 8 }}>
                 {toasts.map((t) => (
@@ -287,4 +406,37 @@ export default function App() {
             </div>
         </div>
     );
+}
+
+function buildExportSegments(tracks: ReturnType<typeof useTimelineStore.getState>['tracks']): Array<{ filePath: string; inMs: number; outMs: number }> {
+    const clips = tracks.flatMap((t, idx) => t.clips.map((c) => ({ trackIndex: idx, clip: c })));
+    if (clips.length === 0) return [];
+    const boundaries = new Set<number>();
+    for (const { clip } of clips) {
+        const start = clip.startMs;
+        const end = clip.startMs + (clip.outMs - clip.inMs);
+        boundaries.add(start);
+        boundaries.add(end);
+    }
+    const sorted = Array.from(boundaries).sort((a, b) => a - b);
+    const segments: Array<{ filePath: string; inMs: number; outMs: number }> = [];
+    for (let i = 0; i < sorted.length - 1; i++) {
+        const a = sorted[i];
+        const b = sorted[i + 1];
+        if (b <= a) continue;
+        // pick active clip by priority (track 1 over 2)
+        let active: { trackIndex: number; clip: any } | undefined;
+        for (let tIdx = 0; tIdx < 2; tIdx++) {
+            const hit = clips.find(({ trackIndex, clip }) => trackIndex === tIdx && a >= clip.startMs && b <= clip.startMs + (clip.outMs - clip.inMs));
+            if (hit) { active = hit; break; }
+        }
+        if (!active) continue; // gap
+        const c = active.clip;
+        const filePath = (c.file as any)?.path as string | undefined;
+        if (!filePath) continue;
+        const relIn = c.inMs + (a - c.startMs);
+        const relOut = relIn + (b - a);
+        segments.push({ filePath, inMs: relIn, outMs: relOut });
+    }
+    return segments;
 }
