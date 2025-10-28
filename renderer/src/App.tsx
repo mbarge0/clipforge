@@ -10,13 +10,16 @@ import {
     validateFileBasic,
     type MediaItemMeta,
 } from './lib/media';
+import { useMediaStore } from './store/media';
 import { useTimelineStore } from './store/timeline';
 
 type Toast = { id: string; kind: 'error' | 'info' | 'success'; message: string };
 
 export default function App() {
     const [pong, setPong] = React.useState<string>('');
-    const [items, setItems] = React.useState<MediaItemMeta[]>([]);
+    const items = useMediaStore((s) => s.items);
+    const addItem = useMediaStore((s) => s.addItem);
+    const updateItem = useMediaStore((s) => s.updateItem);
     const [isDragging, setIsDragging] = React.useState(false);
     const [toasts, setToasts] = React.useState<Toast[]>([]);
     const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -41,6 +44,10 @@ export default function App() {
     const [exportStatus, setExportStatus] = React.useState<string>('');
 
     const mediaIndex = React.useMemo(() => Object.fromEntries(items.map((it) => [it.id, it])), [items]);
+
+    React.useEffect(() => {
+        try { (window as any).__MEDIA_DEBUG__ = items; } catch { }
+    }, [items]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -147,14 +154,14 @@ export default function App() {
                 name: file.name,
                 sizeBytes: file.size,
             };
-            setItems((prev) => [base, ...prev]);
+            console.log('[media] add', { id, name: base.name, path: base.path, sizeBytes: base.sizeBytes });
+            addItem(base);
             try {
                 const meta = await extractVideoMetadataAndThumbnail(file);
-                setItems((prev) =>
-                    prev.map((it) => (it.id === id ? { ...it, ...meta } : it)),
-                );
+                updateItem(id, { ...meta });
+                console.log('[media] updated meta', { id, ...meta });
             } catch (e: any) {
-                setItems((prev) => prev.map((it) => (it.id === id ? { ...it, error: 'Failed to parse metadata' } : it)));
+                updateItem(id, { error: 'Failed to parse metadata' });
                 showToast('error', `${file.name}: failed to read metadata`);
             }
         }
@@ -354,7 +361,14 @@ export default function App() {
                                 <button
                                     onClick={async () => {
                                         if (!destinationPath) { showToast('error', 'Choose destination'); return; }
-                                        const segments = buildExportSegments(tracks);
+                                        try {
+                                            const snapshot = useTimelineStore.getState().tracks.flatMap((t) => t.clips);
+                                            console.log('[export] clip snapshot', snapshot.map((c) => ({ id: c.id, sourceId: c.sourceId, startMs: c.startMs, inMs: c.inMs, outMs: c.outMs, filePath: (c.file as any)?.path })));
+                                        } catch { }
+                                        const segments = buildExportSegments(tracks, mediaIndex);
+                                        if (segments.length === 0) {
+                                            console.warn('[export] planner produced 0 segments');
+                                        }
                                         if (segments.length === 0) { showToast('error', 'Timeline is empty'); return; }
                                         try {
                                             const res = await window.electron?.exportStart?.({ resolution, destinationPath, segments });
@@ -408,7 +422,10 @@ export default function App() {
     );
 }
 
-function buildExportSegments(tracks: ReturnType<typeof useTimelineStore.getState>['tracks']): Array<{ filePath: string; inMs: number; outMs: number }> {
+function buildExportSegments(
+    tracks: ReturnType<typeof useTimelineStore.getState>['tracks'],
+    mediaIndex: Record<string, MediaItemMeta>,
+): Array<{ filePath: string; inMs: number; outMs: number }> {
     const clips = tracks.flatMap((t, idx) => t.clips.map((c) => ({ trackIndex: idx, clip: c })));
     if (clips.length === 0) return [];
     const boundaries = new Set<number>();
@@ -432,7 +449,12 @@ function buildExportSegments(tracks: ReturnType<typeof useTimelineStore.getState
         }
         if (!active) continue; // gap
         const c = active.clip;
-        const filePath = (c.file as any)?.path as string | undefined;
+        const candidatePath = (c.file as any)?.path as string | undefined;
+        const indexPath = mediaIndex[c.sourceId]?.path as string | undefined;
+        const filePath = indexPath || candidatePath;
+        if (!filePath) {
+            console.warn('[export] clip has no file path', { sourceId: c.sourceId, indexPath, candidatePath, name: c.name });
+        }
         if (!filePath) continue;
         const relIn = c.inMs + (a - c.startMs);
         const relOut = relIn + (b - a);
