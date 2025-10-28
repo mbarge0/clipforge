@@ -49,11 +49,13 @@ export default function App() {
 
     const mediaIndex = React.useMemo(() => Object.fromEntries(items.map((it) => [it.id, it])), [items]);
 
+    // --- Debug exposure (media + timeline state) ---
     React.useEffect(() => {
         try {
             (window as any).__MEDIA_DEBUG__ = items;
+            (window as any).__TL_DEBUG__ = useTimelineStore.getState();
         } catch {
-            // ignore
+            // ignore debug exposure errors
         }
     }, [items]);
 
