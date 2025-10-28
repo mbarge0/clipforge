@@ -63,7 +63,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
 
     addClip: (clipBase) => {
         const id = generateId('clip');
-        const clip: TimelineClip = { id, ...clipBase };
+        const clip: TimelineClip = { id, ...clipBase, startMs: Math.max(0, clipBase.startMs) };
         get()._pushHistory();
         set((state) => {
             const tracks = state.tracks.map((t) =>
@@ -130,7 +130,7 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
                 }
                 return t;
             });
-            return { tracks };
+            return { tracks, selectedClipId: clipId };
         });
     },
 

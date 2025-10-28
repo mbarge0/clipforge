@@ -1,6 +1,6 @@
 import React from 'react';
 import type { MediaItemMeta } from '../lib/media';
-import { clipDurationMs, msToPx, pxToMs, SNAP_MS } from '../lib/timeline';
+import { clipDurationMs, msToPx, pxToMs, SNAP_MS, snapMs } from '../lib/timeline';
 import { useTimelineStore } from '../store/timeline';
 
 type Props = {
@@ -42,7 +42,10 @@ export function Timeline({ mediaIndex }: Props) {
         if (!media || !media.durationMs) return;
         const rect = containerRef.current?.getBoundingClientRect();
         const x = e.clientX - (rect?.left || 0);
-        const startMs = Math.max(0, pxToMs(x));
+        const track = tracks.find((t) => t.id === trackId);
+        let startMs = Math.max(0, pxToMs(x));
+        if (track && track.clips.length === 0) startMs = 0; // default align to 0ms for first clip
+        startMs = snapMs(startMs);
         const inMs = 0;
         const outMs = media.durationMs;
         addClip({ sourceId, name: media.name, file: media.file, startMs, inMs, outMs, trackId });
@@ -62,12 +65,13 @@ export function Timeline({ mediaIndex }: Props) {
     }
 
     // Clip drag state
-    const dragRef = React.useRef<{ clipId: string; startMs: number; originX: number; trackId: string } | null>(null);
+    const dragRef = React.useRef<{ clipId: string; originStartMs: number; originX: number; trackId: string } | null>(null);
 
     function onClipMouseDown(e: React.MouseEvent, clipId: string, trackId: string) {
         if ((e.target as HTMLElement).dataset?.handle) return; // trim handles handled separately
-        const rect = containerRef.current?.getBoundingClientRect();
-        dragRef.current = { clipId, startMs: pxToMs(e.clientX - (rect?.left || 0)), originX: e.clientX, trackId };
+        const track = tracks.find((t) => t.id === trackId);
+        const clip = track?.clips.find((c) => c.id === clipId);
+        dragRef.current = { clipId, originStartMs: clip ? clip.startMs : 0, originX: e.clientX, trackId };
         setSelection(clipId);
         window.addEventListener('mousemove', onMouseMove);
         window.addEventListener('mouseup', onMouseUp);
@@ -78,8 +82,19 @@ export function Timeline({ mediaIndex }: Props) {
         if (!ctx) return;
         const deltaPx = e.clientX - ctx.originX;
         const deltaMs = pxToMs(deltaPx);
-        const newStart = Math.max(0, ctx.startMs + deltaMs);
-        moveClip(ctx.clipId, newStart, ctx.trackId);
+        const newStart = snapMs(Math.max(0, ctx.originStartMs + deltaMs));
+        // detect target track under cursor
+        let targetTrackId = ctx.trackId;
+        const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+        if (el) {
+            let node: HTMLElement | null = el;
+            while (node) {
+                const tid = node.dataset?.trackid;
+                if (tid) { targetTrackId = tid; break; }
+                node = node.parentElement;
+            }
+        }
+        moveClip(ctx.clipId, newStart, targetTrackId);
     }
 
     function onMouseUp() {
@@ -112,6 +127,38 @@ export function Timeline({ mediaIndex }: Props) {
         window.removeEventListener('mouseup', onTrimUp);
     }
 
+    // Scrub with requestAnimationFrame for smoothness on ruler
+    const scrubbingRef = React.useRef<{ active: boolean; raf: number | null } | null>(null);
+    function startScrub(e: React.MouseEvent) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        const toMs = (clientX: number) => pxToMs(clientX - (rect?.left || 0));
+        if (!scrubbingRef.current) scrubbingRef.current = { active: false, raf: null };
+        scrubbingRef.current.active = true;
+        markScrubRequest(Date.now());
+        function tick() {
+            if (!scrubbingRef.current?.active) return;
+            scrubbingRef.current.raf = requestAnimationFrame(tick);
+        }
+        setPlayhead(snapMs(Math.max(0, toMs(e.clientX))));
+        window.addEventListener('mousemove', onScrubMove);
+        window.addEventListener('mouseup', endScrub);
+        scrubbingRef.current.raf = requestAnimationFrame(tick);
+    }
+    function onScrubMove(e: MouseEvent) {
+        if (!scrubbingRef.current?.active) return;
+        markScrubRequest(Date.now());
+        const rect = containerRef.current?.getBoundingClientRect();
+        const ms = pxToMs(e.clientX - (rect?.left || 0));
+        setPlayhead(snapMs(Math.max(0, ms)));
+    }
+    function endScrub() {
+        if (!scrubbingRef.current) return;
+        scrubbingRef.current.active = false;
+        if (scrubbingRef.current.raf) cancelAnimationFrame(scrubbingRef.current.raf);
+        window.removeEventListener('mousemove', onScrubMove);
+        window.removeEventListener('mouseup', endScrub);
+    }
+
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#9CA3AF', fontSize: 12 }}>
@@ -120,13 +167,13 @@ export function Timeline({ mediaIndex }: Props) {
             </div>
             <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8 }}>
                 {/* Ruler */}
-                <div style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden' }}>
+                <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
                     <Ruler playheadMs={playheadMs} width={containerWidth} />
                 </div>
                 {/* Tracks */}
                 <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
                     {tracks.map((track) => (
-                        <div key={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F1015', border: '1px solid #1F2430', borderRadius: 6 }}>
+                        <div key={track.id} data-trackid={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F1015', border: '1px solid #1F2430', borderRadius: 6 }}>
                             {track.clips.map((clip) => {
                                 const left = msToPx(clip.startMs);
                                 const width = msToPx(clipDurationMs(clip));

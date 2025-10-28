@@ -20,24 +20,26 @@ export function Preview({ mediaIndex }: Props) {
     const [srcUrl, setSrcUrl] = React.useState<string | undefined>(undefined);
     const [fps, setFps] = React.useState<number>(0);
     const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(undefined);
+    const playheadRef = React.useRef<number>(playheadMs);
+    React.useEffect(() => { playheadRef.current = playheadMs; }, [playheadMs]);
     const lastScrubRequestedAt = useTimelineStore((s) => s.lastScrubRequestedAt);
 
     // Determine current clip (selected or first on Track 1)
-    const primaryTrack = React.useMemo(() => {
-        return tracks[0] ? { ...tracks[0], clips: [...tracks[0].clips].sort((a, b) => a.startMs - b.startMs) } : undefined;
-    }, [tracks]);
+    const sortedTracks = React.useMemo(() => tracks.map((t) => ({ ...t, clips: [...t.clips].sort((a, b) => a.startMs - b.startMs) })), [tracks]);
 
     const currentClip = React.useMemo(() => {
-        // Prefer clip at playhead on Track 1; fallback to selected; then first on Track 1
-        const t0 = primaryTrack;
-        if (t0) {
-            const at = t0.clips.find((c) => playheadMs >= c.startMs && playheadMs < c.startMs + (c.outMs - c.inMs));
+        // Track priority: prefer Track 1 (index 0), then Track 2 (index 1), etc.
+        for (let ti = 0; ti < sortedTracks.length; ti++) {
+            const t = sortedTracks[ti];
+            const at = t.clips.find((c) => playheadMs >= c.startMs && playheadMs < c.startMs + (c.outMs - c.inMs));
             if (at) return at;
         }
-        const selected = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
+        // Fallback: selected clip
+        const selected = sortedTracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId);
         if (selected) return selected;
-        return t0?.clips[0];
-    }, [primaryTrack, tracks, selectedClipId, playheadMs]);
+        // Fallback: first clip on Track 1 if available, else any first
+        return sortedTracks[0]?.clips[0] || sortedTracks[1]?.clips[0];
+    }, [sortedTracks, selectedClipId, playheadMs]);
 
     React.useEffect(() => {
         const clip = currentClip;
@@ -52,7 +54,7 @@ export function Preview({ mediaIndex }: Props) {
         const v = videoRef.current;
         if (!v || !currentClip) return;
         const rel = Math.max(0, playheadMs - currentClip.startMs) / 1000 + currentClip.inMs / 1000;
-        if (Math.abs(v.currentTime - rel) > 0.2) {
+        if (Math.abs(v.currentTime - rel) > 0.05) {
             try { v.currentTime = rel; } catch { }
         }
         if (isPlaying && v.paused) v.play().catch(() => { });
@@ -64,37 +66,32 @@ export function Preview({ mediaIndex }: Props) {
         if (!isPlaying) return;
         let rafId = 0;
         let lastTs = performance.now();
+        const lastTimelineEnd = sortedTracks.flatMap((t) => t.clips).reduce((acc, c) => Math.max(acc, c.startMs + (c.outMs - c.inMs)), 0);
         const step = (now: number) => {
             const dt = now - lastTs;
             lastTs = now;
-            const clip = currentClip;
-            if (clip) {
-                const next = playheadMs + dt;
-                const clipEnd = clip.startMs + (clip.outMs - clip.inMs);
-                if (next >= clipEnd) {
-                    const t0 = primaryTrack;
-                    if (t0) {
-                        const idx = t0.clips.findIndex((c) => c.id === clip.id);
-                        const nextClip = idx >= 0 ? t0.clips[idx + 1] : undefined;
-                        if (nextClip) {
-                            setSelection(nextClip.id);
-                            setPlayhead(nextClip.startMs);
-                            rafId = requestAnimationFrame(step);
-                            return;
-                        }
-                    }
-                    togglePlay();
-                } else {
-                    setPlayhead(next);
-                    rafId = requestAnimationFrame(step);
-                }
-            } else {
-                rafId = requestAnimationFrame(step);
+            const next = playheadRef.current + dt;
+            // Determine active by track priority: Track 1 first, then Track 2
+            let active: typeof currentClip | undefined;
+            for (let ti = 0; ti < sortedTracks.length; ti++) {
+                const t = sortedTracks[ti];
+                const hit = t.clips.find((c) => next >= c.startMs && next < c.startMs + (c.outMs - c.inMs));
+                if (hit) { active = hit; break; }
             }
+            if (active && active.id !== currentClip?.id) {
+                setSelection(active.id);
+            }
+            if (next > lastTimelineEnd + 50) {
+                togglePlay();
+                return;
+            }
+            playheadRef.current = next;
+            setPlayhead(next);
+            rafId = requestAnimationFrame(step);
         };
         rafId = requestAnimationFrame(step);
         return () => cancelAnimationFrame(rafId);
-    }, [isPlaying, playheadMs, currentClip, setPlayhead, togglePlay, primaryTrack, setSelection]);
+    }, [isPlaying, sortedTracks, currentClip, setSelection, setPlayhead, togglePlay]);
 
     // FPS meter via requestAnimationFrame
     React.useEffect(() => {

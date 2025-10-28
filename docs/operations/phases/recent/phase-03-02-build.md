@@ -267,3 +267,18 @@ const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(u
 ```
 
 Outcome: All audit items addressed. Playback and timeline interaction are smoother and safer; URLs managed centrally; copy/paste robust; delete/move confirmed.
+
+---
+
+### Debug Updates (Refinement Round)
+- Smoother Preview start: primed video time and RAF-based playhead advance; reduced initial lag.
+- Default start at 0ms: first dropped clip on a track snaps to 0ms.
+- Bidirectional drag: corrected drag delta based on original clip start; clean snap with no overlaps.
+- Selection persistence: single click selects and remains after mouseup; selection not cleared unless clicking empty timeline.
+- Faster scrubbing: ruler supports mouse drag with requestAnimationFrame updates and grid snapping.
+- Split behavior: Cmd/Ctrl+B acts on the current selection regardless of mouse state.
+- Multi-track preview: active clip at playhead is chosen across all tracks (overlay priority).
+- Undo reliability: ensured a history push precedes move/trim/split/delete; selection retained after move.
+- Real-time rerenders: all edit ops return new arrays/objects; visual blocks update immediately.
+
+Stability: Playback (start and continuous), selection, multi-track preview, and timeline edits behave smoothly after repeated operations with no desynchronization observed.
