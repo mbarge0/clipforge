@@ -1,4 +1,6 @@
 import React from 'react';
+import { Preview } from './components/Preview';
+import { Timeline } from './components/Timeline';
 import {
     extractVideoMetadataAndThumbnail,
     formatBytes,
@@ -8,6 +10,7 @@ import {
     validateFileBasic,
     type MediaItemMeta,
 } from './lib/media';
+import { useTimelineStore } from './store/timeline';
 
 type Toast = { id: string; kind: 'error' | 'info' | 'success'; message: string };
 
@@ -17,6 +20,18 @@ export default function App() {
     const [isDragging, setIsDragging] = React.useState(false);
     const [toasts, setToasts] = React.useState<Toast[]>([]);
     const inputRef = React.useRef<HTMLInputElement | null>(null);
+
+    const playheadMs = useTimelineStore((s) => s.playheadMs);
+    const togglePlay = useTimelineStore((s) => s.togglePlay);
+    const deleteSelection = useTimelineStore((s) => s.deleteSelection);
+    const splitAt = useTimelineStore((s) => s.splitAt);
+    const undo = useTimelineStore((s) => s.undo);
+    const copySelection = useTimelineStore((s) => s.copySelection);
+    const pasteAt = useTimelineStore((s) => s.pasteAt);
+    const selectedClipId = useTimelineStore((s) => s.selectedClipId);
+    const clipsSourceIds = useTimelineStore((s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId))));
+
+    const mediaIndex = React.useMemo(() => Object.fromEntries(items.map((it) => [it.id, it])), [items]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -32,6 +47,44 @@ export default function App() {
             cancelled = true;
         };
     }, []);
+
+    React.useEffect(() => {
+        function onKeyDown(e: KeyboardEvent) {
+            const meta = e.ctrlKey || e.metaKey;
+            if (e.key === ' ' && !meta) {
+                e.preventDefault();
+                togglePlay();
+                return;
+            }
+            if ((e.key === 'Delete' || e.key === 'Backspace') && !meta) {
+                e.preventDefault();
+                deleteSelection();
+                return;
+            }
+            if (meta && (e.key.toLowerCase() === 'z')) {
+                e.preventDefault();
+                undo();
+                return;
+            }
+            if (meta && e.key.toLowerCase() === 'b') {
+                e.preventDefault();
+                if (selectedClipId != null) splitAt(selectedClipId, playheadMs);
+                return;
+            }
+            if (meta && e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                copySelection();
+                return;
+            }
+            if (meta && e.key.toLowerCase() === 'v') {
+                e.preventDefault();
+                pasteAt(playheadMs);
+                return;
+            }
+        }
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [togglePlay, deleteSelection, undo, splitAt, copySelection, pasteAt, playheadMs, selectedClipId]);
 
     function showToast(kind: Toast['kind'], message: string) {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -95,6 +148,11 @@ export default function App() {
             void handleFiles(e.target.files);
             e.currentTarget.value = '';
         }
+    }
+
+    function onLibDragStart(e: React.DragEvent, id: string) {
+        e.dataTransfer.setData('text/sourceId', id);
+        e.dataTransfer.effectAllowed = 'copy';
     }
 
     const dropBorder = isDragging ? '#6E56CF' : '#2A2A31';
@@ -165,7 +223,7 @@ export default function App() {
                             <div style={{ color: '#9CA3AF', fontSize: 14 }}>No media yet. Import to get started.</div>
                         ) : (
                             items.map((item) => (
-                                <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '96px 1fr', gap: 12, border: '1px solid #2A2A31', borderRadius: 8, padding: 8, background: '#18181C' }}>
+                                <div key={item.id} draggable onDragStart={(e) => onLibDragStart(e, item.id)} style={{ display: 'grid', gridTemplateColumns: '96px 1fr', gap: 12, border: '1px solid #2A2A31', borderRadius: 8, padding: 8, background: '#18181C' }}>
                                     <div style={{ width: 96, height: 54, background: '#0B0B0D', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                         {item.thumbnailDataUrl ? (
                                             <img src={item.thumbnailDataUrl} alt="thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -176,7 +234,7 @@ export default function App() {
                                     <div>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                             <strong style={{ fontSize: 14, color: '#E5E7EB', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</strong>
-                                            {item.onTimeline ? (
+                                            {clipsSourceIds.has(item.id) ? (
                                                 <span style={{ fontSize: 10, color: '#6E56CF', border: '1px solid #6E56CF', borderRadius: 999, padding: '0 6px' }}>on timeline</span>
                                             ) : null}
                                         </div>
@@ -201,9 +259,9 @@ export default function App() {
                 </aside>
 
                 <section>
-                    <h3 style={{ marginTop: 0, fontSize: 16 }}>Preview / Timeline (coming in Phase 03)</h3>
-                    <div style={{ border: '1px dashed #2A2A31', borderRadius: 12, padding: 24, color: '#9CA3AF' }}>
-                        This area will host the video preview and timeline.
+                    <div style={{ display: 'grid', gap: 12 }}>
+                        <Preview mediaIndex={mediaIndex} />
+                        <Timeline mediaIndex={mediaIndex} />
                     </div>
                 </section>
             </main>

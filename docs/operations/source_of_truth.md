@@ -9,7 +9,7 @@ Acts as the canonical reference for all AI-assisted development.
 ## 1. Core Technologies
 - **Framework:** Electron (Main + Preload) + React 18 + Vite  
 - **Language:** TypeScript (renderer) + modern JS (main)  
-- **State:** Local component state now; Zustand planned for Timeline  
+- **State:** Zustand for Timeline store; local state for Media Library  
 - **Styling:** Inline styles for MVP; Tailwind + tokens planned  
 - **Media:** HTML5 Video + Canvas; FFmpeg (future export/record phases)  
 - **Testing:** Manual QA; Jest/Vitest to be added later  
@@ -21,8 +21,12 @@ Use this section to recall project stack before generating new files or updating
 ## 2. Components
 | Category | Path | Description |
 |-----------|------|-------------|
-| Renderer App | `renderer/src/App.tsx` | Main UI; now includes Media Library import sidebar |
+| Renderer App | `renderer/src/App.tsx` | Main UI; Media Library, Preview, Timeline integration |
 | Media Utils | `renderer/src/lib/media.ts` | Supported formats, validation, formatting, metadata + thumbnail helpers |
+| Timeline Types | `renderer/src/lib/timeline.ts` | Entities, grid/scale utils, IDs |
+| Timeline Store | `renderer/src/store/timeline.ts` | Zustand store: add/trim/split/move/delete, undo, copy/paste, playhead |
+| Timeline UI | `renderer/src/components/Timeline.tsx` | Ruler, tracks, clip blocks, DnD, trim/move/select |
+| Preview UI | `renderer/src/components/Preview.tsx` | Selected-clip preview; play/pause and playhead sync |
 | Main Process | `main/main.js` | Electron lifecycle, window creation, IPC health check |
 | Preload | `main/preload.ts` | Secure bridge exposing `window.electron.invoke` |
 | Config | `config/*` | Environment and logger utilities |
@@ -60,7 +64,7 @@ Each phase captures key architectural or design shifts.
 - Dev stability patches for macOS GPU/sandbox in dev only.  
 - Docs: Plan, Build, Reflect stored under `/docs/operations/phases/recent/`.
 
-### Phase 02 – Media Library & Import (current)
+### Phase 02 – Media Library & Import
 - Implemented Media Library import in renderer: drag-and-drop + file picker.  
 - Validation: formats (MP4/MOV/WebM) and size ≤ 500MB.  
 - Metadata extraction: duration, resolution; Thumbnail generation via canvas (max width 320px).  
@@ -71,6 +75,18 @@ Each phase captures key architectural or design shifts.
   - `renderer/src/App.tsx`
 
 *(Add new phases here as they complete.)*
+
+### Phase 03 – Timeline & Playback (current)
+- Implemented two-track timeline with drag-and-drop from Media Library.  
+- Interactions: select, move (snap 100ms), trim in/out, split at playhead, delete, undo (≥10).  
+- Copy/Paste added (Cmd/Ctrl+C/V) placing duplicate at playhead.  
+- Preview panel plays selected clip; Space toggles play/pause; playhead sync.  
+- Files added/updated:
+  - `renderer/src/lib/timeline.ts`
+  - `renderer/src/store/timeline.ts`
+  - `renderer/src/components/Timeline.tsx`
+  - `renderer/src/components/Preview.tsx`
+  - `renderer/src/App.tsx`
 
 
 ## 6. AI Integration Notes
