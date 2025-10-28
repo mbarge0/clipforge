@@ -1,5 +1,6 @@
 import React from 'react';
 import type { MediaItemMeta } from '../lib/media';
+import { extractVideoMetadataAndThumbnail, validateFileBasic } from '../lib/media';
 import { clipDurationMs, msToPx, pxToMs, SNAP_MS, snapMs } from '../lib/timeline';
 import { useTimelineStore } from '../store/timeline';
 
@@ -34,25 +35,62 @@ export function Timeline({ mediaIndex }: Props) {
         return () => ro.disconnect();
     }, []);
 
-    function onDrop(e: React.DragEvent, trackId: string) {
+    async function onDrop(e: React.DragEvent, trackId: string) {
         e.preventDefault();
-        const sourceId = e.dataTransfer.getData('text/sourceId');
-        if (!sourceId) return;
-        const media = mediaIndex[sourceId];
-        if (!media || !media.durationMs) return;
         const rect = containerRef.current?.getBoundingClientRect();
         const x = e.clientX - (rect?.left || 0);
         const track = tracks.find((t) => t.id === trackId);
         let startMs = Math.max(0, pxToMs(x));
         if (track && track.clips.length === 0) startMs = 0; // default align to 0ms for first clip
         startMs = snapMs(startMs);
+
+        const sourceId = e.dataTransfer.getData('text/sourceId');
+        if (sourceId) {
+            const media = mediaIndex[sourceId];
+            if (!media || !media.durationMs) return;
+            const inMs = 0;
+            const outMs = media.durationMs;
+            addClip({
+                sourceId,
+                name: media.name,
+                file: media.file,
+                sourcePath: media.path,
+                startMs,
+                inMs,
+                outMs,
+                trackId,
+            });
+            return;
+        }
+
+        // Direct Finder drop (no sourceId)
+        const files = e.dataTransfer?.files;
+        if (!files || files.length === 0) return;
+        const file = files[0] as any as File;
+        const v = validateFileBasic(file);
+        if (!v.ok) return;
+
+        let durationMs: number | undefined;
+        try {
+            const meta = await extractVideoMetadataAndThumbnail(file);
+            durationMs = meta.durationMs;
+        } catch { }
+        if (!durationMs) return;
+
+        let resolvedPath: string | undefined = (file as any)?.path as string | undefined;
+        if (!resolvedPath) {
+            try {
+                resolvedPath = await (window as any).electron?.invoke?.('media:resolvePath', (file as any)?.name);
+            } catch { }
+        }
+
         const inMs = 0;
-        const outMs = media.durationMs;
+        const outMs = durationMs;
         addClip({
-            sourceId,
-            name: media.name,
-            file: media.file,
-            sourcePath: media.path, // ✅ preserve filesystem path
+            sourceId: (file as any)?.name || `external-${Date.now()}`,
+            name: (file as any)?.name || 'file',
+            file,
+            sourcePath: resolvedPath,
             startMs,
             inMs,
             outMs,

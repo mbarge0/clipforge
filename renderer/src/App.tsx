@@ -478,7 +478,7 @@ export default function App() {
                                             const snapshot = useTimelineStore.getState().tracks.flatMap((t) => t.clips);
                                             console.log('[export] clip snapshot', snapshot.map((c) => ({ id: c.id, sourceId: c.sourceId, startMs: c.startMs, inMs: c.inMs, outMs: c.outMs, filePath: (c.file as any)?.path })));
                                         } catch { }
-                                        const segments = buildExportSegments(tracks, mediaIndex);
+                                        const segments = buildExportSegments(tracks, mediaIndex, (msg) => showToast('error', msg));
                                         if (segments.length === 0) {
                                             console.warn('[export] planner produced 0 segments');
                                         }
@@ -556,7 +556,8 @@ export default function App() {
 /** --- Helper for export segment building --- */
 function buildExportSegments(
     tracks: ReturnType<typeof useTimelineStore.getState>['tracks'],
-    mediaIndex: Record<string, MediaItemMeta>
+    mediaIndex: Record<string, MediaItemMeta>,
+    onError?: (msg: string) => void,
 ): Array<{ filePath: string; inMs: number; outMs: number }> {
     const clips = tracks.flatMap((t, idx) =>
         t.clips.map((c) => ({ trackIndex: idx, clip: c }))
@@ -583,11 +584,13 @@ function buildExportSegments(
         }
         if (!active) continue; // gap
         const c = active.clip;
-        const candidatePath = (c.file as any)?.path as string | undefined;
+        const explicitPath = c.sourcePath as string | undefined;
         const indexPath = mediaIndex[c.sourceId]?.path as string | undefined;
-        const filePath = indexPath || candidatePath;
+        const candidatePath = (c.file as any)?.path as string | undefined;
+        const filePath = explicitPath || indexPath || candidatePath;
         if (!filePath) {
-            console.warn('[export] clip has no file path', { sourceId: c.sourceId, indexPath, candidatePath, name: c.name });
+            console.warn('[export] clip has no file path', { sourceId: c.sourceId, explicitPath, indexPath, candidatePath, name: c.name });
+            onError?.('Clip missing file path');
             continue;
         }
         const relIn = c.inMs + (a - c.startMs);
