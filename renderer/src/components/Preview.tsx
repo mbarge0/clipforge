@@ -67,13 +67,19 @@ export function Preview({ mediaIndex }: Props) {
                 const recorded = isRecordedClip(media as any, clip as any);
                 const recPath = (media as any)?.finalPath || (media as any)?.path;
                 if (recorded && recPath && (window as any).electron?.toMediaUrl) {
+                    try { console.log('[preview.url] trying toMediaUrl', { path: recPath }); } catch { }
                     const { url } = await (window as any).electron.toMediaUrl(String(recPath));
-                    if (!revoked) {
-                        try { console.log('[preview.url] using file URL', { path: recPath, url }); } catch { }
-                        setSrcUrl(url);
-                        objectUrlRef.current = url;
+                    if (url) {
+                        if (!revoked) {
+                            try { console.log('[preview.url] using file URL', { path: recPath, url }); } catch { }
+                            setSrcUrl(url);
+                            // Do not set objectUrlRef for file:// or media:// to avoid revoke attempts
+                            objectUrlRef.current = undefined;
+                        }
+                        return; // prevent blob fallback
+                    } else {
+                        try { console.warn('[preview.url] no URL returned from toMediaUrl'); } catch { }
                     }
-                    return; // skip blob logic
                 }
             } catch (err) {
                 try { console.warn('[preview.url] toMediaUrl failed', err); } catch { }
