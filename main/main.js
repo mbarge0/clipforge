@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } from 'electron';
 import ffmpegPath from 'ffmpeg-static';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
@@ -13,6 +13,10 @@ app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('no-sandbox'); // Fixes SIGTRAP GPU sandbox crash
+
+// ✅ Enable screen capture in Chromium
+app.commandLine.appendSwitch('enable-usermedia-screen-capturing');
+app.commandLine.appendSwitch('enable-features', 'DesktopCapture');
 
 // --- Resolve paths ---
 const __filename = fileURLToPath(import.meta.url);
@@ -31,6 +35,7 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            experimentalFeatures: true,
             preload: path.join(__dirname, 'preload.js'),
         },
     });
@@ -61,6 +66,21 @@ function createWindow() {
 
 // --- Electron Lifecycle ---
 app.whenReady().then(() => {
+    // Grant display capture and media permissions proactively
+    try {
+        const s = session?.defaultSession;
+        if (s?.setPermissionRequestHandler) {
+            s.setPermissionRequestHandler((wc, permission, callback, details) => {
+                if (permission === 'display-capture' || permission === 'media') {
+                    return callback(true);
+                }
+                return callback(false);
+            });
+        }
+    } catch (e) {
+        console.warn('[permissions] setPermissionRequestHandler failed:', e);
+    }
+
     createWindow();
 
     app.on('activate', () => {
@@ -184,6 +204,33 @@ ipcMain.handle('record:composePiP', async (_event, payload) => {
     if (!exists) throw new Error('compose_failed');
     console.log('[record:composePiP] wrote', outPath);
     return outPath;
+});
+
+// ---------------- High-level Recording IPC (compat) ----------------
+ipcMain.handle('recording:start', async (_event, opts) => {
+    const extension = (opts && typeof opts.extension === 'string' && opts.extension) || 'webm';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-record-'));
+    const filePath = path.join(dir, `record-${Date.now()}.${extension}`);
+    const stream = fs.createWriteStream(filePath);
+    const sessionId = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeRecords.set(sessionId, { stream, filePath, dir });
+    console.log('[recording:start]', { sessionId, filePath });
+    return { success: true, sessionId, filePath };
+});
+
+ipcMain.handle('recording:stop', async (_event, payload) => {
+    const sessionId = payload?.sessionId;
+    const rec = activeRecords.get(sessionId);
+    if (!rec) return { success: false, error: 'invalid_session' };
+    await new Promise((resolve) => rec.stream.end(resolve));
+    activeRecords.delete(sessionId);
+    console.log('[recording:stop]', { sessionId, filePath: rec.filePath });
+    return { success: true, filePath: rec.filePath };
+});
+
+// ---------------- Desktop sources (screen/window) ----------------
+ipcMain.handle('desktop:getSources', async (_event, opts) => {
+    return desktopCapturer.getSources(opts ?? { types: ['screen', 'window'] });
 });
 
 ipcMain.handle('export:chooseDestination', async () => {

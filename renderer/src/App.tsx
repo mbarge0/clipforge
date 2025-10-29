@@ -45,6 +45,16 @@ export default function App() {
         (s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId)))
     );
 
+    // Bridge diagnostics (one-time)
+    React.useEffect(() => {
+        try {
+            console.log('[bridge:keys]', Object.keys((window as any).electron || {}));
+            if (typeof (window as any).electron?.getDesktopSources !== 'function') {
+                console.error('[bridge] getDesktopSources STILL missing');
+            }
+        } catch { }
+    }, []);
+
     // Export UI state
     const [showExport, setShowExport] = React.useState(false);
     const [resolution, setResolution] = React.useState<'720p' | '1080p' | 'source'>('1080p');
@@ -269,18 +279,45 @@ export default function App() {
     async function startScreenRecording() {
         if (recordMode) return;
         try {
+            console.log('[record] startScreenRecording: begin');
             const mockPath = (window as any).__TEST_MOCK_RECORDING_PATH__ as string | undefined;
             if (mockPath) {
                 // Test-mode: simulate recording session; actual file provided by test
                 recordersRef.current = { kind: 'single', session1: mockPath };
                 startTimer('screen');
+                console.log('[record] startScreenRecording: test-mode mock active', { mockPath });
                 return;
             }
-            const display = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
+            console.log('[record] getDisplayMedia availability:', typeof (navigator.mediaDevices as any)?.getDisplayMedia);
+            const sources = await electron.getDesktopSources({ types: ['screen'] });
+            const source = sources[0];
+            const display = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: source.id,
+                        minWidth: 1280,
+                        maxWidth: 3840,
+                        minHeight: 720,
+                        maxHeight: 2160,
+                    },
+                },
+            } as any);
+            console.log('[record] getDisplayMedia resolved: tracks=', display?.getTracks?.().length, display?.getTracks?.().map((t: MediaStreamTrack) => ({ kind: t.kind, enabled: t.enabled })));
             const stream = await combineWithMic(display);
+            console.log('[record] combineWithMic resolved: tracks=', stream?.getTracks?.().length, stream?.getTracks?.().map((t: MediaStreamTrack) => ({ kind: t.kind, enabled: t.enabled })));
             const mimeType = pickMimeType();
+            console.log('[record] mimeType selected:', mimeType);
             const { sessionId, filePath } = await electron.recordOpenFile({ extension: 'webm' });
-            const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+            console.log('[record] recordOpenFile response:', { sessionId, filePath });
+            let rec: MediaRecorder;
+            try {
+                rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+            } catch (err: any) {
+                console.error('[record] MediaRecorder ctor threw:', { name: err?.name, message: err?.message, stack: err?.stack });
+                throw err;
+            }
             rec.ondataavailable = async (evt: BlobEvent) => {
                 if (evt.data && evt.data.size) {
                     const buf = await evt.data.arrayBuffer();
@@ -292,11 +329,15 @@ export default function App() {
                 await addRecordedToLibrary(filePath, 'screen');
                 cleanupTimer();
                 setRecordMode(undefined);
+                console.log('[record] onstop: session closed and media added', { sessionId, filePath });
             };
+            console.log('[record] starting MediaRecorder with timeslice=1000ms');
             rec.start(1000);
             recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId };
             startTimer('screen');
+            console.log('[record] startScreenRecording: recorder active');
         } catch (err) {
+            console.error('[record] startScreenRecording failed:', { name: (err as any)?.name, message: (err as any)?.message, stack: (err as any)?.stack });
             showToast('error', 'Failed to start screen recording');
         }
     }
@@ -328,41 +369,81 @@ export default function App() {
         }
     }
 
+    // --- Picture-in-Picture (PiP) Recording ---
     async function startPiPRecording() {
         if (recordMode) return;
         try {
-            const display = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
-            const screenStream = await combineWithMic(display);
+            console.log('[record] startPiPRecording: begin');
+
+            // ✅ REPLACEMENT: Use Electron desktopCapturer instead of getDisplayMedia
+            const { desktopCapturer } = (window as any).electron || require('electron');
+            const sources = await desktopCapturer.getSources({ types: ['screen'] });
+            if (!sources.length) throw new Error('no_screen_sources');
+            console.log('[record] desktopCapturer sources:', sources.map((s: any) => s.name));
+
+            const screenStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: sources[0].id,
+                    },
+                },
+            } as any);
+
+            // Combine with mic input for PiP audio
+            const combinedScreenStream = await combineWithMic(screenStream);
             const camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             const mimeType = pickMimeType();
+
             const f1 = await electron.recordOpenFile({ extension: 'webm' });
             const f2 = await electron.recordOpenFile({ extension: 'webm' });
-            const rec1 = new MediaRecorder(screenStream, mimeType ? { mimeType } : undefined);
+
+            const rec1 = new MediaRecorder(combinedScreenStream, mimeType ? { mimeType } : undefined);
             const rec2 = new MediaRecorder(camStream, mimeType ? { mimeType } : undefined);
+
             rec1.ondataavailable = async (evt: BlobEvent) => {
-                if (evt.data && evt.data.size) await electron.recordAppendChunk(f1.sessionId, await evt.data.arrayBuffer());
+                if (evt.data && evt.data.size)
+                    await electron.recordAppendChunk(f1.sessionId, await evt.data.arrayBuffer());
             };
             rec2.ondataavailable = async (evt: BlobEvent) => {
-                if (evt.data && evt.data.size) await electron.recordAppendChunk(f2.sessionId, await evt.data.arrayBuffer());
+                if (evt.data && evt.data.size)
+                    await electron.recordAppendChunk(f2.sessionId, await evt.data.arrayBuffer());
             };
+
             let stoppedCount = 0;
             const onStop = async () => {
                 stoppedCount++;
                 if (stoppedCount < 2) return;
                 await electron.recordCloseFile(f1.sessionId);
                 await electron.recordCloseFile(f2.sessionId);
-                const outPath = await electron.recordComposePiP({ screenPath: f1.filePath, webcamPath: f2.filePath, outExtension: 'mp4' });
+                const outPath = await electron.recordComposePiP({
+                    screenPath: f1.filePath,
+                    webcamPath: f2.filePath,
+                    outExtension: 'mp4',
+                });
                 await addRecordedToLibrary(outPath, 'pip');
                 cleanupTimer();
                 setRecordMode(undefined);
             };
+
             rec1.onstop = onStop;
             rec2.onstop = onStop;
+
             rec1.start(1000);
             rec2.start(1000);
-            recordersRef.current = { kind: 'pip', rec1, rec2, session1: f1.sessionId, session2: f2.sessionId };
+            recordersRef.current = {
+                kind: 'pip',
+                rec1,
+                rec2,
+                session1: f1.sessionId,
+                session2: f2.sessionId,
+            };
+
             startTimer('pip');
-        } catch {
+            console.log('[record] startPiPRecording: recorder active');
+        } catch (err) {
+            console.error('[record] startPiPRecording failed:', err);
             showToast('error', 'Failed to start PiP recording');
         }
     }
