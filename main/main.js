@@ -204,8 +204,12 @@ ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
 // ---------------- Media URL IPC ----------------
 ipcMain.handle('toMediaUrl', async (_event, filePath) => {
     try {
+        if (!filePath) throw new Error('No filePath provided');
         const abs = path.resolve(String(filePath));
-        const url = `media://file?path=${encodeURIComponent(abs)}`;
+        const isDev = !app.isPackaged;
+        const url = isDev
+            ? `file://${abs}`
+            : `media://file?path=${encodeURIComponent(abs)}`;
         console.log('[ipc] toMediaUrl', { filePath: abs, url });
         return { url };
     } catch {

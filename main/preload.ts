@@ -1,6 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import fs from 'fs';
-import path from 'path';
 
 // Expose a minimal, typed-safe IPC bridge
 contextBridge.exposeInMainWorld('electron', {
@@ -41,41 +39,6 @@ contextBridge.exposeInMainWorld('electron', {
     getPathForFileName: (nameOrPath: string) => ipcRenderer.invoke('media:getPathForFileName', nameOrPath),
     getDesktopSources: (opts?: { types?: ('screen' | 'window')[] }) => ipcRenderer.invoke('desktop:getSources', opts),
 
-    // Object URL helpers for local files (no file:// usage in renderer)
-    toObjectUrl: async (filePath: string, mimeHint?: string): Promise<{ url: string }> => {
-        // simple in-memory cache path -> url
-        if (!('__CF_URL_CACHE__' in window)) {
-            (window as any).__CF_URL_CACHE__ = new Map<string, string>();
-        }
-        const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
-        const existing = cache.get(filePath);
-        if (existing) {
-            try { console.log('[preload.toObjectUrl] cache hit', { filePath, url: existing }); } catch { }
-            return { url: existing };
-        }
-
-        const data = await fs.promises.readFile(filePath);
-        const ext = path.extname(filePath || '').toLowerCase();
-        const mime = mimeHint || (ext === '.webm' ? 'video/webm' : ext === '.mp4' ? 'video/mp4' : ext === '.mov' ? 'video/quicktime' : 'video/*');
-        try { console.log('[preload.toObjectUrl] read file', { filePath, bytes: data?.byteLength ?? data?.length, mime }); } catch { }
-        const blob = new Blob([data], { type: mime });
-        const url = URL.createObjectURL(blob);
-        cache.set(filePath, url);
-        try { console.log('[preload.toObjectUrl] created URL', { url }); } catch { }
-        return { url };
-    },
-    revokeObjectUrl: (url: string): void => {
-        try {
-            console.log('[preload.revokeObjectUrl]', { url });
-            if ('__CF_URL_CACHE__' in window) {
-                const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
-                for (const [k, v] of Array.from(cache.entries())) {
-                    if (v === url) cache.delete(k);
-                }
-            }
-            URL.revokeObjectURL(url);
-        } catch { }
-    },
 
     // Media URL helper (media:// via main process)
     toMediaUrl: async (filePath: string): Promise<{ url: string }> => {
@@ -115,9 +78,6 @@ declare global {
             getPathForFileName: (nameOrPath: string) => Promise<string | undefined>;
             getDesktopSources: (opts?: { types?: ('screen' | 'window')[] }) => Promise<Array<any>>;
 
-            // Object URL helpers
-            toObjectUrl: (filePath: string, mimeHint?: string) => Promise<{ url: string }>;
-            revokeObjectUrl: (url: string) => void;
             toMediaUrl: (filePath: string) => Promise<{ url: string }>;
 
             // Recording
