@@ -44,6 +44,10 @@ When adding new modules (e.g., Timeline, Export), log the key entry points and r
 | `export:progress` | main → renderer | Progress events `{ jobId, percent, status }` ≥ 1/sec-equivalent |
 | `export:complete` | main → renderer | Completion event `{ jobId, success, outputPath? | error? }` |
 | `export:cancel` | renderer → main | Cancel active export job, terminates ffmpeg and cleans temps |
+| `record:openFile` | renderer → main | Create temp file + stream handle for recording chunks |
+| `record:appendChunk` | renderer → main | Append binary chunk to active recording file |
+| `record:closeFile` | renderer → main | Close active recording file and return final path |
+| `record:composePiP` | renderer → main | Compose screen + webcam into PiP MP4 via FFmpeg |
 
 Note: No new IPC was required for Media Library MVP; all import/metadata operations are renderer-local using browser APIs. File system operations remain in main for future phases.
 
@@ -101,6 +105,17 @@ Each phase captures key architectural or design shifts.
   - `main/main.js` (Export IPC + runner)
   - `main/preload.ts` (export APIs)
   - `renderer/src/App.tsx` (Export UI + planner)
+
+### Phase 05 – Recording Engine
+- Recording IPC (open/append/close/composePiP) added in main; preload bridge exposes typed APIs.
+- Renderer adds toolbar controls for Screen/Webcam/PiP; streams chunks to main; PiP composed via FFmpeg and auto-added to Library/Timeline.
+- Preview supports `file://` paths; metadata-from-path helper added to derive duration/resolution.
+- Files added/updated:
+  - `main/main.js` (Recording IPC + PiP)
+  - `main/preload.ts` (record APIs)
+  - `renderer/src/components/Preview.tsx` (file:// support)
+  - `renderer/src/lib/media.ts` (metadata-from-path)
+  - `renderer/src/App.tsx` (recording UI + controller)
 
 
 ## 6. AI Integration Notes

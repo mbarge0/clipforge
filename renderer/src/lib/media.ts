@@ -129,6 +129,27 @@ export async function extractVideoMetadataAndThumbnail(
     };
 }
 
+/**
+ * Extracts basic video metadata from a local file path using a hidden HTMLVideoElement.
+ * Does not generate a thumbnail.
+ */
+export async function extractVideoMetadataFromPath(
+    filePath: string
+): Promise<Pick<MediaItemMeta, "width" | "height" | "durationMs">> {
+    const video = document.createElement("video");
+    video.src = `file://${filePath}`;
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    await waitForEvent(video, "loadedmetadata", 5000);
+    const duration = isFinite(video.duration) ? video.duration : 0;
+    return {
+        width: video.videoWidth || undefined,
+        height: video.videoHeight || undefined,
+        durationMs: Math.max(0, Math.round(duration * 1000)) || undefined,
+    };
+}
+
 // --- Utility Promises ---
 function waitForEvent(el: HTMLMediaElement, event: string, timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {

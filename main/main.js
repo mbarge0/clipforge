@@ -119,6 +119,73 @@ ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
     }
 });
 
+// ---------------- Recording Engine IPC ----------------
+const activeRecords = new Map(); // sessionId -> { stream, filePath, dir }
+
+ipcMain.handle('record:openFile', async (_event, opts) => {
+    const extension = (opts && typeof opts.extension === 'string' && opts.extension) || 'webm';
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-record-'));
+    const filePath = path.join(dir, `record-${Date.now()}.${extension}`);
+    const stream = fs.createWriteStream(filePath);
+    const sessionId = `rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeRecords.set(sessionId, { stream, filePath, dir });
+    console.log('[record:openFile]', { sessionId, filePath });
+    return { sessionId, filePath };
+});
+
+ipcMain.handle('record:appendChunk', async (_event, payload) => {
+    try {
+        const { sessionId, chunk } = payload || {};
+        const rec = activeRecords.get(sessionId);
+        if (!rec || !chunk) return false;
+        await new Promise((resolve, reject) => {
+            try {
+                rec.stream.write(Buffer.from(chunk), (err) => (err ? reject(err) : resolve(null)));
+            } catch (err) {
+                reject(err);
+            }
+        });
+        return true;
+    } catch {
+        return false;
+    }
+});
+
+ipcMain.handle('record:closeFile', async (_event, sessionId) => {
+    const rec = activeRecords.get(sessionId);
+    if (!rec) return undefined;
+    await new Promise((resolve) => rec.stream.end(resolve));
+    activeRecords.delete(sessionId);
+    console.log('[record:closeFile]', { sessionId, filePath: rec.filePath });
+    return rec.filePath;
+});
+
+ipcMain.handle('record:composePiP', async (_event, payload) => {
+    const { screenPath, webcamPath, outExtension } = payload || {};
+    if (!screenPath || !webcamPath) throw new Error('missing_inputs');
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-pip-'));
+    const outPath = path.join(dir, `pip-${Date.now()}.${outExtension || 'mp4'}`);
+    await new Promise((resolve, reject) => {
+        // Overlay webcam (scaled to 20% of main width) at bottom-right with 20px margin
+        const filter = '[1:v]scale=iw*0.2:-1[cam];[0:v][cam]overlay=W-w-20:H-h-20:format=auto';
+        const proc = ffmpeg()
+            .input(screenPath)
+            .input(webcamPath)
+            .complexFilter(filter)
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions(['-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y'])
+            .on('error', (err) => reject(err))
+            .on('end', () => resolve(null))
+            .save(outPath);
+    });
+    const exists = fs.existsSync(outPath);
+    if (!exists) throw new Error('compose_failed');
+    console.log('[record:composePiP] wrote', outPath);
+    return outPath;
+});
+
 ipcMain.handle('export:chooseDestination', async () => {
     const result = await dialog.showSaveDialog({
         title: 'Choose export destination',

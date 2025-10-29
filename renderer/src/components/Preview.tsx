@@ -45,9 +45,16 @@ export function Preview({ mediaIndex }: Props) {
         const clip = currentClip;
         if (!clip) return;
         const media = mediaIndex[clip.sourceId];
-        if (!media?.file) return;
-        const url = getObjectUrl(clip.sourceId, media.file);
-        setSrcUrl(url);
+        if (!media) return;
+        if (media.path) {
+            const fileUrl = `file://${media.path}`;
+            setSrcUrl(fileUrl);
+            return;
+        }
+        if (media.file) {
+            const url = getObjectUrl(clip.sourceId, media.file);
+            setSrcUrl(url);
+        }
     }, [currentClip, mediaIndex]);
 
     React.useEffect(() => {
