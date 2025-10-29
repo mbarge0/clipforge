@@ -62,29 +62,22 @@ export function Preview({ mediaIndex }: Props) {
                 console.log('[preview.detect]', { clipId: clip?.id, name: (media as any)?.name, path: (media as any)?.path, finalPath: (media as any)?.finalPath, recorded });
             } catch { }
 
-            // Recorded items: force file-based URL via bridge (dev: file://, prod: media://)
-            const recPath = (media as any)?.path || (media as any)?.finalPath;
-            const isRecorded = !!recPath && (
-                String(recPath).includes('clipforge-record-') ||
-                String(recPath).includes('fixed-record-') ||
-                (clip?.sourceId?.startsWith?.('rec-'))
-            );
-            if (isRecorded && (window as any).electron?.toMediaUrl) {
-                try {
-                    try { console.log('[preview.forceFile] trying toMediaUrl', { path: recPath }); } catch { }
+            // If recorded, resolve a file-based URL via bridge before blob logic
+            try {
+                const recorded = isRecordedClip(media as any, clip as any);
+                const recPath = (media as any)?.finalPath || (media as any)?.path;
+                if (recorded && recPath && (window as any).electron?.toMediaUrl) {
                     const { url } = await (window as any).electron.toMediaUrl(String(recPath));
                     if (!revoked) {
-                        try { console.log('[preview.forceFile] using file URL', { path: recPath, url }); } catch { }
+                        try { console.log('[preview.url] using file URL', { path: recPath, url }); } catch { }
                         setSrcUrl(url);
                         objectUrlRef.current = url;
                     }
-                    return;
-                } catch {
-                    // For recorded items, do not fall back to blob; leave unset
-                    setSrcUrl(undefined);
-                    objectUrlRef.current = undefined;
-                    return;
+                    return; // skip blob logic
                 }
+            } catch (err) {
+                try { console.warn('[preview.url] toMediaUrl failed', err); } catch { }
+                // fall through to blob logic
             }
 
             // Imported files: use the provided File blob
