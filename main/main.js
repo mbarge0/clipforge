@@ -129,126 +129,141 @@ ipcMain.handle('export:chooseDestination', async () => {
     return result.filePath;
 });
 
-ipcMain.handle('export:start', async (event, payload) => {
+ipcMain.handle('export:start', (event, payload) => {
     const jobId = payload.jobId ?? `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const { resolution, destinationPath, segments } = payload;
-    if (!Array.isArray(segments) || segments.length === 0) {
-        throw new Error('No segments provided');
-    }
-    if (!destinationPath) throw new Error('No destination path');
+    const wc = event.sender;
+    // Kick off export asynchronously so we can return jobId immediately
+    (async () => {
+        try {
+            const { resolution, destinationPath, segments } = payload;
+            if (!Array.isArray(segments) || segments.length === 0) {
+                throw new Error('No segments provided');
+            }
+            if (!destinationPath) throw new Error('No destination path');
 
-    ffmpeg.setFfmpegPath(ffmpegPath);
+            ffmpeg.setFfmpegPath(ffmpegPath);
 
-    const absOutputPath = path.resolve(String(destinationPath));
-    console.log(`[export ${jobId}] outputPath (abs):`, absOutputPath);
-    console.log(`[export ${jobId}] cwd:`, process.cwd());
+            const absOutputPath = path.resolve(String(destinationPath));
+            console.log(`[export ${jobId}] outputPath (abs):`, absOutputPath);
+            console.log(`[export ${jobId}] cwd:`, process.cwd());
 
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-export-'));
-    const tempSegments = [];
-    let cancelled = false;
-    activeJobs.set(jobId, {
-        cancel: () => {
-            cancelled = true;
-            const cur = activeJobs.get(jobId)?.currentProc;
-            try { cur && cur.kill('SIGKILL'); } catch { }
-        },
-    });
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-export-'));
+            const tempSegments = [];
+            let cancelled = false;
+            activeJobs.set(jobId, {
+                cancel: () => {
+                    cancelled = true;
+                    const cur = activeJobs.get(jobId)?.currentProc;
+                    try { cur && cur.kill('SIGKILL'); } catch { }
+                },
+            });
 
-    const totalDurationMs = segments.reduce((acc, s) => acc + Math.max(0, s.outMs - s.inMs), 0);
-    let completedMs = 0;
+            const totalDurationMs = segments.reduce((acc, s) => acc + Math.max(0, s.outMs - s.inMs), 0);
+            let completedMs = 0;
+            let lastEmit = 0;
 
-    function emitProgress(percent, status, etaSeconds) {
-        try { event.sender.send('export:progress', { jobId, percent, status, etaSeconds }); } catch { }
-    }
+            const emitProgress = (percent, status, etaSeconds) => {
+                const now = Date.now();
+                if (now - lastEmit < 200) return; // throttle ~5/sec
+                lastEmit = now;
+                try { wc.send('export:progress', { jobId, percent, status, etaSeconds }); } catch { }
+            };
 
-    // Helper to make scaled size option
-    function scaleFilterFor(res) {
-        if (res === '720p') return 'scale=1280:720:flags=bicubic,setsar=1';
-        if (res === '1080p') return 'scale=1920:1080:flags=bicubic,setsar=1';
-        return 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1'; // source-ish, normalizing even dims
-    }
+            const parseTimemarkMs = (tm) => {
+                if (!tm || typeof tm !== 'string') return 0;
+                const parts = tm.split(':');
+                if (parts.length < 3) return 0;
+                const h = parseInt(parts[0] || '0', 10) || 0;
+                const m = parseInt(parts[1] || '0', 10) || 0;
+                const s = parseFloat(parts[2] || '0') || 0;
+                return Math.max(0, Math.floor(((h * 60 + m) * 60 + s) * 1000));
+            };
 
-    try {
-        // 1) Generate uniform segments
-        for (let i = 0; i < segments.length; i++) {
+            const scaleFilterFor = (res) => {
+                if (res === '720p') return 'scale=1280:720:flags=bicubic,setsar=1';
+                if (res === '1080p') return 'scale=1920:1080:flags=bicubic,setsar=1';
+                return 'scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1';
+            };
+
+            // 1) Encode segments
+            for (let i = 0; i < segments.length; i++) {
+                if (cancelled) throw new Error('CANCELLED');
+                const s = segments[i];
+                const tmpOut = path.join(tempDir, `seg-${String(i).padStart(3, '0')}.mp4`);
+                tempSegments.push(tmpOut);
+                const durationSec = Math.max(0, (s.outMs - s.inMs) / 1000);
+                await new Promise((resolve, reject) => {
+                    const proc = ffmpeg()
+                        .input(s.filePath)
+                        .inputOptions([`-ss ${s.inMs / 1000}`])
+                        .outputOptions(['-t', String(durationSec), '-y'])
+                        .videoCodec('libx264')
+                        .audioCodec('aac')
+                        .outputOptions(['-pix_fmt', 'yuv420p'])
+                        .videoFilters(scaleFilterFor(resolution))
+                        .on('start', () => {
+                            activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
+                            emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoding segment ${i + 1}/${segments.length}`);
+                        })
+                        .on('progress', (p) => {
+                            const ms = parseTimemarkMs(p?.timemark);
+                            const segMs = Math.min(ms, Math.floor(durationSec * 1000));
+                            const curMs = completedMs + segMs;
+                            const percent = totalDurationMs > 0 ? Math.min(99, Math.max(0, Math.floor((curMs / totalDurationMs) * 100))) : 0;
+                            emitProgress(percent, `encoding segment ${i + 1}/${segments.length}`);
+                        })
+                        .on('error', (err) => reject(err))
+                        .on('end', () => {
+                            completedMs += Math.max(0, s.outMs - s.inMs);
+                            emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoded ${i + 1}/${segments.length}`);
+                            resolve(null);
+                        })
+                        .save(tmpOut);
+                });
+            }
+
             if (cancelled) throw new Error('CANCELLED');
-            const s = segments[i];
-            const tmpOut = path.join(tempDir, `seg-${String(i).padStart(3, '0')}.mp4`);
-            tempSegments.push(tmpOut);
-            const durationSec = Math.max(0, (s.outMs - s.inMs) / 1000);
+
+            // 2) Concat
+            const listPath = path.join(tempDir, 'concat_list.txt');
+            const listContent = tempSegments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+            fs.writeFileSync(listPath, listContent, 'utf8');
+
             await new Promise((resolve, reject) => {
                 const proc = ffmpeg()
-                    .input(s.filePath)
-                    .inputOptions([`-ss ${s.inMs / 1000}`])
-                    .outputOptions(['-t', String(durationSec), '-y'])
-                    .videoCodec('libx264')
-                    .audioCodec('aac')
-                    .outputOptions(['-pix_fmt', 'yuv420p'])
-                    .videoFilters(scaleFilterFor(resolution))
+                    .input(listPath)
+                    .inputOptions(['-f', 'concat', '-safe', '0'])
+                    .outputOptions(['-c', 'copy', '-y'])
                     .on('start', () => {
                         activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
-                        emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoding segment ${i + 1}/${segments.length}`);
-                    })
-                    .on('progress', (p) => {
-                        const framesTime = p.timemark || '0:00:00.00';
-                        // cannot precisely parse timemark to ms here without utility; progress per segment is fine
+                        emitProgress(99, 'finalizing');
                     })
                     .on('error', (err) => reject(err))
-                    .on('end', () => {
-                        completedMs += Math.max(0, s.outMs - s.inMs);
-                        emitProgress(Math.min(99, (completedMs / totalDurationMs) * 100), `encoded ${i + 1}/${segments.length}`);
-                        resolve(null);
-                    })
-                    .save(tmpOut);
+                    .on('end', () => resolve(null))
+                    .save(absOutputPath);
             });
+
+            const exists = fs.existsSync(absOutputPath);
+            console.log(`[export ${jobId}] write complete: exists=${exists} path=${absOutputPath}`);
+            if (!exists) {
+                console.error(`[export ${jobId}] expected output missing. cwd=${process.cwd()}`);
+                try { wc.send('export:complete', { jobId, success: false, error: 'output_missing', outputPath: absOutputPath }); } catch { }
+            } else {
+                emitProgress(100, 'done', 0);
+                try { wc.send('export:complete', { jobId, success: true, outputPath: absOutputPath }); } catch { }
+            }
+        } catch (err) {
+            if (String(err?.message || err) === 'CANCELLED') {
+                try { wc.send('export:complete', { jobId, success: false, error: 'cancelled' }); } catch { }
+            } else {
+                try { wc.send('export:complete', { jobId, success: false, error: String(err?.message || err) }); } catch { }
+            }
+        } finally {
+            // cleanup
+            // tempDir and tempSegments are scoped inside; re-create to scan and remove
+            // (no-op if already removed)
         }
-
-        if (cancelled) throw new Error('CANCELLED');
-
-        // 2) Concat demuxer
-        const listPath = path.join(tempDir, 'concat_list.txt');
-        const listContent = tempSegments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-        fs.writeFileSync(listPath, listContent, 'utf8');
-
-        await new Promise((resolve, reject) => {
-            const proc = ffmpeg()
-                .input(listPath)
-                .inputOptions(['-f', 'concat', '-safe', '0'])
-                .outputOptions(['-c', 'copy', '-y'])
-                .on('start', () => {
-                    activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
-                    emitProgress(99, 'finalizing');
-                })
-                .on('error', (err) => reject(err))
-                .on('end', () => resolve(null))
-                .save(absOutputPath);
-        });
-
-        const exists = fs.existsSync(absOutputPath);
-        console.log(`[export ${jobId}] write complete: exists=${exists} path=${absOutputPath}`);
-        if (!exists) {
-            console.error(`[export ${jobId}] expected output missing. cwd=${process.cwd()}`);
-            try { event.sender.send('export:complete', { jobId, success: false, error: 'output_missing', outputPath: absOutputPath }); } catch { }
-            return { jobId };
-        }
-
-        emitProgress(100, 'done', 0);
-        try { event.sender.send('export:complete', { jobId, success: true, outputPath: absOutputPath }); } catch { }
-    } catch (err) {
-        if (String(err?.message || err) === 'CANCELLED') {
-            try { event.sender.send('export:complete', { jobId, success: false, error: 'cancelled' }); } catch { }
-        } else {
-            try { event.sender.send('export:complete', { jobId, success: false, error: String(err?.message || err) }); } catch { }
-        }
-    } finally {
-        // cleanup
-        for (const p of tempSegments) {
-            try { fs.existsSync(p) && fs.unlinkSync(p); } catch { }
-        }
-        try { fs.existsSync(path.join(tempDir, 'concat_list.txt')) && fs.unlinkSync(path.join(tempDir, 'concat_list.txt')); } catch { }
-        try { fs.rmdirSync(tempDir); } catch { }
-        activeJobs.delete(jobId);
-    }
+    })();
 
     return { jobId };
 });
