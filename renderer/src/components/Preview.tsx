@@ -50,7 +50,24 @@ export function Preview({ mediaIndex }: Props) {
             const media = mediaIndex[clip.sourceId];
             if (!media) return setSrcUrl(undefined);
 
-            // Prefer existing File blob URL if present (imports)
+            // Recorded items: path points into our temp recording folder
+            const isRecorded = !!media.path && media.path.includes('/clipforge-record-');
+            if (isRecorded && (window as any).electron?.toObjectUrl) {
+                try {
+                    const { url } = await (window as any).electron.toObjectUrl(media.path);
+                    if (!revoked) {
+                        try { console.log('[preview] source=recorded-path', { path: media.path, url }); } catch { }
+                        setSrcUrl(url);
+                        objectUrlRef.current = url;
+                    }
+                } catch {
+                    setSrcUrl(undefined);
+                    objectUrlRef.current = undefined;
+                }
+                return;
+            }
+
+            // Imported files: use the provided File blob
             if (media.file) {
                 const url = getObjectUrl(clip.sourceId, media.file);
                 try { console.log('[preview] source=file-blob', { clipId: clip.id, name: media.name, url }); } catch { }
@@ -59,23 +76,8 @@ export function Preview({ mediaIndex }: Props) {
                 return;
             }
 
-            // For recorded files (path), create a blob URL via preload helper
-            if (media.path && (window as any).electron?.toObjectUrl) {
-                try {
-                    const { url } = await (window as any).electron.toObjectUrl(media.path);
-                    if (!revoked) {
-                        try { console.log('[preview] source=object-url', { path: media.path, url }); } catch { }
-                        setSrcUrl(url);
-                        objectUrlRef.current = url;
-                    }
-                } catch {
-                    setSrcUrl(undefined);
-                    objectUrlRef.current = undefined;
-                }
-            } else {
-                setSrcUrl(undefined);
-                objectUrlRef.current = undefined;
-            }
+            setSrcUrl(undefined);
+            objectUrlRef.current = undefined;
         })();
         return () => {
             revoked = true;

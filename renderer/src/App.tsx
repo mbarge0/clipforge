@@ -329,6 +329,9 @@ export default function App() {
             }
             const pending: Promise<any>[] = [];
             let totalBytes = 0;
+            let finalResolved = false;
+            let finalResolve: () => void = () => { };
+            const final = new Promise<void>((res) => { finalResolve = res; });
             rec.ondataavailable = async (evt: BlobEvent) => {
                 if (evt.data && evt.data.size) {
                     const p = (async () => {
@@ -339,25 +342,37 @@ export default function App() {
                     })();
                     pending.push(p);
                     await p.catch(() => { });
+                    // If stop() triggered a final dataavailable, resolve after its append completes
+                    if (recordersRef.current?.rec1 === rec && recordersRef.current?.stopping1 && !finalResolved) {
+                        finalResolved = true;
+                        try { await p; } catch { }
+                        try { finalResolve(); } catch { }
+                    }
                 }
             };
             rec.onstop = async () => {
                 try {
                     console.log('[record] onstop: waiting pending', { count: pending.length, totalBytes });
+                    // Ensure the final dataavailable (triggered by stop/requestData) is flushed
+                    try { await final; } catch { }
                     await Promise.allSettled(pending);
+                    // Small post-stop delay to allow encoder to finish header/cues
+                    await new Promise((r) => setTimeout(r, 150));
                     console.log('[record] onstop: finalize complete', { totalBytes });
-                    await electron.recordCloseFile(sessionId);
-                    await addRecordedToLibrary(filePath, 'screen');
+                    const closedPath = await electron.recordCloseFile(sessionId);
+                    const finalPath = (typeof closedPath === 'string' && closedPath) ? closedPath : filePath;
+                    console.log('[record] onstop: close result', { closedPath, finalPath });
+                    await addRecordedToLibrary(finalPath, 'screen');
                     cleanupTimer();
                     setRecordMode(undefined);
-                    console.log('[record] onstop: session closed and media added', { sessionId, filePath });
+                    console.log('[record] onstop: session closed and media added', { sessionId, finalPath });
                 } catch (e) {
                     console.error('[record] finalize failed', e);
                 }
             };
             console.log('[record] starting MediaRecorder with timeslice=1000ms');
             rec.start(1000);
-            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes };
+            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes, stopping1: false } as any;
             startTimer('screen');
             console.log('[record] startScreenRecording: recorder active');
         } catch (err) {
@@ -450,6 +465,8 @@ export default function App() {
                 console.log('[record:pip] onstop: waiting pending', { pending1: pending1.length, pending2: pending2.length, bytes1, bytes2 });
                 await Promise.allSettled(pending1);
                 await Promise.allSettled(pending2);
+                // Small post-stop delay to allow encoder to finish header/cues
+                await new Promise((r) => setTimeout(r, 150));
                 console.log('[record:pip] onstop: finalize complete', { bytes1, bytes2 });
                 await electron.recordCloseFile(f1.sessionId);
                 await electron.recordCloseFile(f2.sessionId);
@@ -502,6 +519,7 @@ export default function App() {
                 return;
             }
             if (ref.rec1 && ref.rec1.state !== 'inactive') {
+                (ref as any).stopping1 = true;
                 try { ref.rec1.requestData(); } catch { }
                 ref.rec1.stop();
             }
@@ -965,9 +983,10 @@ function buildExportSegments(
 
 /** --- Recording Helpers --- */
 function pickMimeType(): string | undefined {
+    // Prefer VP8 to improve container finalization (cues/duration in Chromium)
     const candidates = [
-        'video/webm; codecs=vp9,opus',
         'video/webm; codecs=vp8,opus',
+        'video/webm; codecs=vp9,opus',
         'video/webm',
     ];
     for (const m of candidates) {

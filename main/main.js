@@ -177,6 +177,38 @@ ipcMain.handle('record:closeFile', async (_event, sessionId) => {
     await new Promise((resolve) => rec.stream.end(resolve));
     activeRecords.delete(sessionId);
     console.log('[record:closeFile]', { sessionId, filePath: rec.filePath });
+    // Finalize container to ensure seekable metadata (duration/cues)
+    try {
+        const ext = path.extname(rec.filePath || '').toLowerCase();
+        if (ext === '.webm') {
+            ffmpeg.setFfmpegPath(ffmpegPath);
+            // Re-mux by re-encoding into a single MP4 with faststart for seekability
+            const outPath = path.join(path.dirname(rec.filePath), `fixed-${path.basename(rec.filePath, ext)}.mp4`);
+            await new Promise((resolve, reject) => {
+                ffmpeg()
+                    .input(rec.filePath)
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .outputOptions([
+                        '-movflags', '+faststart',
+                        '-pix_fmt', 'yuv420p',
+                        '-preset', 'ultrafast',
+                        '-crf', '28',
+                        '-y',
+                    ])
+                    .on('error', (err) => reject(err))
+                    .on('end', () => resolve(null))
+                    .save(outPath);
+            });
+            const exists = fs.existsSync(outPath);
+            if (exists) {
+                console.log('[record] remux: mp4 fixed container written', { outPath });
+                return outPath;
+            }
+        }
+    } catch (e) {
+        console.warn('[record] remux failed, returning original file', e);
+    }
     return rec.filePath;
 });
 
