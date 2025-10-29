@@ -50,21 +50,29 @@ export function Preview({ mediaIndex }: Props) {
             const media = mediaIndex[clip.sourceId];
             if (!media) return setSrcUrl(undefined);
 
-            // Recorded items: path points into our temp recording folder
-            const isRecorded = !!media.path && media.path.includes('/clipforge-record-');
-            if (isRecorded && (window as any).electron?.toObjectUrl) {
+            // Recorded items: force file-based URL via bridge (dev: file://, prod: media://)
+            const recPath = (media as any)?.path || (media as any)?.finalPath;
+            const isRecorded = !!recPath && (
+                String(recPath).includes('clipforge-record-') ||
+                String(recPath).includes('fixed-record-') ||
+                (clip?.sourceId?.startsWith?.('rec-'))
+            );
+            if (isRecorded && (window as any).electron?.toMediaUrl) {
                 try {
-                    const { url } = await (window as any).electron.toObjectUrl(media.path);
+                    try { console.log('[preview.forceFile] trying toMediaUrl', { path: recPath }); } catch { }
+                    const { url } = await (window as any).electron.toMediaUrl(String(recPath));
                     if (!revoked) {
-                        try { console.log('[preview] source=recorded-path', { path: media.path, url }); } catch { }
+                        try { console.log('[preview.forceFile] using file URL', { path: recPath, url }); } catch { }
                         setSrcUrl(url);
                         objectUrlRef.current = url;
                     }
+                    return;
                 } catch {
+                    // For recorded items, do not fall back to blob; leave unset
                     setSrcUrl(undefined);
                     objectUrlRef.current = undefined;
+                    return;
                 }
-                return;
             }
 
             // Imported files: use the provided File blob
