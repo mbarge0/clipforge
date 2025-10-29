@@ -18,6 +18,7 @@ export function Preview({ mediaIndex }: Props) {
 
     const videoRef = React.useRef<HTMLVideoElement | null>(null);
     const [srcUrl, setSrcUrl] = React.useState<string | undefined>(undefined);
+    const objectUrlRef = React.useRef<string | undefined>(undefined);
     const [fps, setFps] = React.useState<number>(0);
     const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(undefined);
     const playheadRef = React.useRef<number>(playheadMs);
@@ -43,18 +44,45 @@ export function Preview({ mediaIndex }: Props) {
 
     React.useEffect(() => {
         const clip = currentClip;
-        if (!clip) return;
-        const media = mediaIndex[clip.sourceId];
-        if (!media) return;
-        if (media.path) {
-            const fileUrl = `file://${media.path}`;
-            setSrcUrl(fileUrl);
-            return;
-        }
-        if (media.file) {
-            const url = getObjectUrl(clip.sourceId, media.file);
-            setSrcUrl(url);
-        }
+        let revoked = false;
+        (async () => {
+            if (!clip) return setSrcUrl(undefined);
+            const media = mediaIndex[clip.sourceId];
+            if (!media) return setSrcUrl(undefined);
+
+            // Prefer existing File blob URL if present (imports)
+            if (media.file) {
+                const url = getObjectUrl(clip.sourceId, media.file);
+                setSrcUrl(url);
+                objectUrlRef.current = undefined;
+                return;
+            }
+
+            // For recorded files (path), create a blob URL via preload helper
+            if (media.path && (window as any).electron?.toObjectUrl) {
+                try {
+                    const { url } = await (window as any).electron.toObjectUrl(media.path);
+                    if (!revoked) {
+                        setSrcUrl(url);
+                        objectUrlRef.current = url;
+                    }
+                } catch {
+                    setSrcUrl(undefined);
+                    objectUrlRef.current = undefined;
+                }
+            } else {
+                setSrcUrl(undefined);
+                objectUrlRef.current = undefined;
+            }
+        })();
+        return () => {
+            revoked = true;
+            const u = objectUrlRef.current;
+            if (u && (window as any).electron?.revokeObjectUrl) {
+                try { (window as any).electron.revokeObjectUrl(u); } catch { }
+            }
+            objectUrlRef.current = undefined;
+        };
     }, [currentClip, mediaIndex]);
 
     React.useEffect(() => {

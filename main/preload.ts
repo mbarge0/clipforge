@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import fs from 'fs';
+import path from 'path';
 
 // Expose a minimal, typed-safe IPC bridge
 contextBridge.exposeInMainWorld('electron', {
@@ -39,6 +41,36 @@ contextBridge.exposeInMainWorld('electron', {
     getPathForFileName: (nameOrPath: string) => ipcRenderer.invoke('media:getPathForFileName', nameOrPath),
     getDesktopSources: (opts?: { types?: ('screen' | 'window')[] }) => ipcRenderer.invoke('desktop:getSources', opts),
 
+    // Object URL helpers for local files (no file:// usage in renderer)
+    toObjectUrl: async (filePath: string, mimeHint?: string): Promise<{ url: string }> => {
+        // simple in-memory cache path -> url
+        if (!('__CF_URL_CACHE__' in window)) {
+            (window as any).__CF_URL_CACHE__ = new Map<string, string>();
+        }
+        const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
+        const existing = cache.get(filePath);
+        if (existing) return { url: existing };
+
+        const data = await fs.promises.readFile(filePath);
+        const ext = path.extname(filePath || '').toLowerCase();
+        const mime = mimeHint || (ext === '.webm' ? 'video/webm' : ext === '.mp4' ? 'video/mp4' : ext === '.mov' ? 'video/quicktime' : 'video/*');
+        const blob = new Blob([data], { type: mime });
+        const url = URL.createObjectURL(blob);
+        cache.set(filePath, url);
+        return { url };
+    },
+    revokeObjectUrl: (url: string): void => {
+        try {
+            if ('__CF_URL_CACHE__' in window) {
+                const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
+                for (const [k, v] of Array.from(cache.entries())) {
+                    if (v === url) cache.delete(k);
+                }
+            }
+            URL.revokeObjectURL(url);
+        } catch { }
+    },
+
     // Recording API
     recordOpenFile: (opts?: { extension?: string }) => ipcRenderer.invoke('record:openFile', opts ?? {}),
     recordAppendChunk: (sessionId: string, chunk: ArrayBuffer | Uint8Array) => {
@@ -68,6 +100,10 @@ declare global {
             // Media helpers
             getPathForFileName: (nameOrPath: string) => Promise<string | undefined>;
             getDesktopSources: (opts?: { types?: ('screen' | 'window')[] }) => Promise<Array<any>>;
+
+            // Object URL helpers
+            toObjectUrl: (filePath: string, mimeHint?: string) => Promise<{ url: string }>;
+            revokeObjectUrl: (url: string) => void;
 
             // Recording
             recordOpenFile: (opts?: { extension?: string }) => Promise<{ sessionId: string; filePath: string }>;

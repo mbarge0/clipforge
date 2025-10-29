@@ -3,13 +3,12 @@ import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
 import {
     extractVideoMetadataAndThumbnail,
-    extractVideoMetadataFromPath,
     formatBytes,
     formatDuration,
     MAX_FILE_BYTES,
     SUPPORTED_EXTENSIONS,
     validateFileBasic,
-    type MediaItemMeta,
+    type MediaItemMeta
 } from './lib/media';
 import { generateId } from './lib/timeline';
 import { useMediaStore } from './store/media';
@@ -487,25 +486,23 @@ export default function App() {
     async function addRecordedToLibrary(filePath: string, kind: 'screen' | 'webcam' | 'pip') {
         const baseName = filePath.split(/[/\\]/).pop() || `${kind}-${Date.now()}.webm`;
         const id = generateId('rec');
-        const placeholder = new File([], baseName);
         const base: MediaItemMeta = {
             id,
-            file: placeholder,
+            file: new File([], baseName),
             path: filePath,
             name: baseName,
             sizeBytes: 0,
         };
         addItem(base);
         try {
-            const meta = await extractVideoMetadataFromPath(filePath);
-            updateItem(id, { ...meta, path: filePath });
-            // Auto-add to timeline Track 1 at current playhead
-            const duration = meta.durationMs ?? 0;
+            const meta = await (window as any).electron.invoke('media:getMetadata', filePath);
+            updateItem(id, { ...(meta || {}), path: filePath });
+            const duration = (meta?.durationMs ?? 0);
             const startMs = useTimelineStore.getState().playheadMs;
             useTimelineStore.getState().addClip({
                 sourceId: id,
                 name: baseName,
-                file: placeholder,
+                file: base.file,
                 startMs,
                 inMs: 0,
                 outMs: Math.max(1000, duration || 1000),
@@ -513,8 +510,8 @@ export default function App() {
                 sourcePath: filePath,
             });
             showToast('success', `Added ${kind} recording`);
-        } catch {
-            showToast('error', 'Recorded file added, but failed to read metadata');
+        } catch (e) {
+            showToast('error', 'Failed to read recorded metadata');
         }
     }
 

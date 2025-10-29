@@ -233,6 +233,42 @@ ipcMain.handle('desktop:getSources', async (_event, opts) => {
     return desktopCapturer.getSources(opts ?? { types: ['screen', 'window'] });
 });
 
+// ---------------- Media metadata (duration/size/dimensions) ----------------
+ipcMain.removeHandler?.('media:getMetadata');
+ipcMain.handle('media:getMetadata', async (_event, filePath) => {
+    try {
+        const abs = path.resolve(String(filePath));
+        let sizeBytes = 0;
+        try { sizeBytes = fs.statSync(abs).size; } catch { }
+
+        // ffprobe via fluent-ffmpeg
+        const probe = await new Promise((resolve) => {
+            try {
+                ffmpeg.ffprobe(abs, (err, data) => {
+                    if (err) return resolve(undefined);
+                    resolve(data);
+                });
+            } catch {
+                resolve(undefined);
+            }
+        });
+
+        let durationMs, width, height;
+        try {
+            const format = probe?.format;
+            const streams = probe?.streams || [];
+            durationMs = format?.duration ? Math.max(0, Math.round(format.duration * 1000)) : undefined;
+            const v = streams.find((s) => s.codec_type === 'video');
+            width = v?.width;
+            height = v?.height;
+        } catch { }
+
+        return { durationMs, width, height, sizeBytes };
+    } catch {
+        return { durationMs: undefined, width: undefined, height: undefined, sizeBytes: undefined };
+    }
+});
+
 ipcMain.handle('export:chooseDestination', async () => {
     const result = await dialog.showSaveDialog({
         title: 'Choose export destination',
