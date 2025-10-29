@@ -77,6 +77,14 @@ contextBridge.exposeInMainWorld('electron', {
         } catch { }
     },
 
+    // Media URL helper (media:// via main process)
+    toMediaUrl: async (filePath: string): Promise<{ url: string }> => {
+        const res = await ipcRenderer.invoke('toMediaUrl', filePath);
+        const url = (res && typeof res.url === 'string') ? res.url : '';
+        try { console.log('[preload.toMediaUrl]', { filePath, url }); } catch { }
+        return { url };
+    },
+
     // Recording API
     recordOpenFile: (opts?: { extension?: string }) => ipcRenderer.invoke('record:openFile', opts ?? {}),
     recordAppendChunk: (sessionId: string, chunk: ArrayBuffer | Uint8Array) => {
@@ -110,6 +118,7 @@ declare global {
             // Object URL helpers
             toObjectUrl: (filePath: string, mimeHint?: string) => Promise<{ url: string }>;
             revokeObjectUrl: (url: string) => void;
+            toMediaUrl: (filePath: string) => Promise<{ url: string }>;
 
             // Recording
             recordOpenFile: (opts?: { extension?: string }) => Promise<{ sessionId: string; filePath: string }>;

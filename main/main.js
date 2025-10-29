@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, protocol, session } from 'electron';
 import ffmpegPath from 'ffmpeg-static';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
@@ -81,6 +81,68 @@ app.whenReady().then(() => {
         console.warn('[permissions] setPermissionRequestHandler failed:', e);
     }
 
+    // ---------------- Custom Protocol for Media Streaming ----------------
+    try {
+        console.log('[protocol] registerStreamProtocol called');
+        protocol.registerStreamProtocol('media', (request, callback) => {
+            try {
+                const reqUrl = new URL(request.url);
+                const absPath = reqUrl.searchParams.get('path');
+                const ext = absPath ? path.extname(absPath).toLowerCase() : '';
+                const mime = ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : ext === '.mov' ? 'video/quicktime' : 'application/octet-stream';
+                if (!absPath || !fs.existsSync(absPath)) {
+                    return callback({ statusCode: 404, headers: { 'Content-Type': 'text/plain' }, data: fs.createReadStream('/dev/null') });
+                }
+                const stat = fs.statSync(absPath);
+                const size = stat.size;
+                const range = request.headers?.Range || request.headers?.range;
+                if (range && typeof range === 'string') {
+                    const m = /bytes=(\d+)-(\d+)?/.exec(range);
+                    let start = 0; let end = size - 1;
+                    if (m) {
+                        start = parseInt(m[1], 10);
+                        if (m[2] != null) end = parseInt(m[2], 10);
+                    }
+                    start = isNaN(start) ? 0 : Math.min(Math.max(0, start), Math.max(0, size - 1));
+                    end = isNaN(end) ? size - 1 : Math.min(Math.max(start, end), size - 1);
+                    const chunkSize = end - start + 1;
+                    callback({
+                        statusCode: 206,
+                        headers: {
+                            'Content-Type': mime,
+                            'Accept-Ranges': 'bytes',
+                            'Content-Length': String(chunkSize),
+                            'Content-Range': `bytes ${start}-${end}/${size}`,
+                        },
+                        data: fs.createReadStream(absPath, { start, end }),
+                    });
+                } else {
+                    callback({
+                        statusCode: 200,
+                        headers: {
+                            'Content-Type': mime,
+                            'Accept-Ranges': 'bytes',
+                            'Content-Length': String(size),
+                        },
+                        data: fs.createReadStream(absPath),
+                    });
+                }
+            } catch (e) {
+                console.warn('[media protocol] failed', e);
+                callback({ statusCode: 500, headers: { 'Content-Type': 'text/plain' }, data: fs.createReadStream('/dev/null') });
+            }
+        });
+        console.log('[protocol] media:// registered');
+        try {
+            const handled = protocol.isProtocolHandledSync('media');
+            console.log('[protocol] media handled?', handled);
+        } catch (e) {
+            console.warn('[protocol] isProtocolHandledSync threw', e);
+        }
+    } catch (e) {
+        console.warn('[protocol] registerStreamProtocol failed', e);
+    }
+
     createWindow();
 
     app.on('activate', () => {
@@ -136,6 +198,18 @@ ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
     } catch (err) {
         console.log('[media:getPathForFileName]', nameOrPath, '→ error:', err?.message || err);
         return undefined;
+    }
+});
+
+// ---------------- Media URL IPC ----------------
+ipcMain.handle('toMediaUrl', async (_event, filePath) => {
+    try {
+        const abs = path.resolve(String(filePath));
+        const url = `media://file?path=${encodeURIComponent(abs)}`;
+        console.log('[ipc] toMediaUrl', { filePath: abs, url });
+        return { url };
+    } catch {
+        return { url: '' };
     }
 });
 
