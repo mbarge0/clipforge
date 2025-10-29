@@ -555,6 +555,9 @@ export default function App() {
             id,
             file: new File([], baseName),
             path: filePath,
+            // ensure both fields point to finalized path for preview/export consumers
+            // @ts-ignore - tolerate extra field if not in type
+            finalPath: filePath,
             name: baseName,
             sizeBytes: 0,
         };
@@ -562,7 +565,8 @@ export default function App() {
         try {
             const meta = await (window as any).electron.invoke('media:getMetadata', filePath);
             try { console.log('[record] media:getMetadata result', { id, filePath, meta }); } catch { }
-            updateItem(id, { ...(meta || {}), path: filePath });
+            // propagate finalized path into both path and finalPath
+            updateItem(id, { ...(meta || {}), path: filePath, ...({ finalPath: filePath } as any) });
             const duration = (meta?.durationMs ?? 0);
             const startMs = useTimelineStore.getState().playheadMs;
             useTimelineStore.getState().addClip({
