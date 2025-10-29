@@ -3,6 +3,13 @@ import type { MediaItemMeta } from '../lib/media';
 import { getObjectUrl } from '../lib/urlCache';
 import { useTimelineStore } from '../store/timeline';
 
+function isRecordedClip(media: any, clip: any): boolean {
+    const p = media?.finalPath ?? media?.path;
+    if (p && (p.includes('clipforge-record-') || p.includes('fixed-record-'))) return true;
+    if (clip?.sourceId?.startsWith?.('rec-')) return true;
+    return false;
+}
+
 type Props = {
     mediaIndex: Record<string, MediaItemMeta>;
 };
@@ -49,6 +56,11 @@ export function Preview({ mediaIndex }: Props) {
             if (!clip) return setSrcUrl(undefined);
             const media = mediaIndex[clip.sourceId];
             if (!media) return setSrcUrl(undefined);
+
+            try {
+                const recorded = isRecordedClip(media as any, clip as any);
+                console.log('[preview.detect]', { clipId: clip?.id, name: (media as any)?.name, path: (media as any)?.path, finalPath: (media as any)?.finalPath, recorded });
+            } catch { }
 
             // Recorded items: force file-based URL via bridge (dev: file://, prod: media://)
             const recPath = (media as any)?.path || (media as any)?.finalPath;
