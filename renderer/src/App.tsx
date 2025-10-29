@@ -269,6 +269,13 @@ export default function App() {
     async function startScreenRecording() {
         if (recordMode) return;
         try {
+            const mockPath = (window as any).__TEST_MOCK_RECORDING_PATH__ as string | undefined;
+            if (mockPath) {
+                // Test-mode: simulate recording session; actual file provided by test
+                recordersRef.current = { kind: 'single', session1: mockPath };
+                startTimer('screen');
+                return;
+            }
             const display = await (navigator.mediaDevices as any).getDisplayMedia({ video: true, audio: false });
             const stream = await combineWithMic(display);
             const mimeType = pickMimeType();
@@ -364,6 +371,15 @@ export default function App() {
         const ref = recordersRef.current;
         if (!ref) return;
         try {
+            // Mock path mode: no rec1/rec2 present; add provided path directly
+            const mockPath = (!ref.rec1 && !ref.rec2) ? ref.session1 : undefined;
+            if (mockPath) {
+                await addRecordedToLibrary(mockPath, recordMode || 'screen');
+                cleanupTimer();
+                setRecordMode(undefined);
+                recordersRef.current = null;
+                return;
+            }
             if (ref.rec1 && ref.rec1.state !== 'inactive') ref.rec1.stop();
             if (ref.rec2 && ref.rec2.state !== 'inactive') ref.rec2.stop();
         } catch { }

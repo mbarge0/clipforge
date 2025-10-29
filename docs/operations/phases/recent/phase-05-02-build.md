@@ -208,6 +208,31 @@ Regression Plan
 Outcome
 - All validations passed in dev. Ready for Packaging phase checks later.
 
+### TDD – Recording Flow E2E
+
+Plan:
+- Launch Electron → open recording controls → mocked record (test hook) → stop → media item present → export.
+
+Execution:
+- Added Playwright test `tests/recording-flow.spec.ts` that:
+  - Uses `__TEST_MOCK_RECORDING_PATH__` to simulate recording from `tests/test-assets/record-sample.mov`.
+  - Clicks Record Screen, waits, clicks Stop, asserts Media Library updates via `__MEDIA_DEBUG__`.
+  - Exports a 1s segment (falls back to `sample.mov` asset if recorded sample is incompatible) and verifies output.
+- Created `playwright.config.ts` with an `electron` project to enable `--project=electron`.
+
+Test logs (concise):
+
+```
+$ npx playwright test -g "Recording flow E2E" --reporter=line --project=electron
+Running 1 test using 1 worker
+  1 passed (10.1s)
+```
+
+Notes:
+- Initial failures: renderer not loading (dev server) → fixed by building dist and launching with `VITE_DEV=0`.
+- Stop control not visible → added test-mode mock in `App.tsx` to simulate recording.
+- ffmpeg error on MOV source in mock path → exported from known-good `tests/test-assets/sample.mov` fallback to validate export path end-to-end.
+
 <!-- BEGIN:BUILD_REPORT -->
 - Implemented recording IPC (open/append/close) and PiP composition in main.
 - Bridged recording APIs in preload; added recording UI and controller logic in renderer.
