@@ -29,7 +29,17 @@ export default function App() {
     const [recordMode, setRecordMode] = React.useState<undefined | 'screen' | 'webcam' | 'pip'>(undefined);
     const [recordElapsedMs, setRecordElapsedMs] = React.useState<number>(0);
     const recordTimerRef = React.useRef<number | null>(null);
-    const recordersRef = React.useRef<{ kind: 'single' | 'pip'; rec1?: MediaRecorder; rec2?: MediaRecorder; session1?: string; session2?: string } | null>(null);
+    const recordersRef = React.useRef<{
+        kind: 'single' | 'pip';
+        rec1?: MediaRecorder;
+        rec2?: MediaRecorder;
+        session1?: string;
+        session2?: string;
+        pending1?: Promise<any>[];
+        pending2?: Promise<any>[];
+        bytes1?: number;
+        bytes2?: number;
+    } | null>(null);
 
     const playheadMs = useTimelineStore((s) => s.playheadMs);
     const togglePlay = useTimelineStore((s) => s.togglePlay);
@@ -317,22 +327,37 @@ export default function App() {
                 console.error('[record] MediaRecorder ctor threw:', { name: err?.name, message: err?.message, stack: err?.stack });
                 throw err;
             }
+            const pending: Promise<any>[] = [];
+            let totalBytes = 0;
             rec.ondataavailable = async (evt: BlobEvent) => {
                 if (evt.data && evt.data.size) {
-                    const buf = await evt.data.arrayBuffer();
-                    await electron.recordAppendChunk(sessionId, buf);
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer();
+                        totalBytes += buf.byteLength;
+                        console.log('[record] chunk', { size: buf.byteLength, totalBytes });
+                        await electron.recordAppendChunk(sessionId, buf);
+                    })();
+                    pending.push(p);
+                    await p.catch(() => { });
                 }
             };
             rec.onstop = async () => {
-                await electron.recordCloseFile(sessionId);
-                await addRecordedToLibrary(filePath, 'screen');
-                cleanupTimer();
-                setRecordMode(undefined);
-                console.log('[record] onstop: session closed and media added', { sessionId, filePath });
+                try {
+                    console.log('[record] onstop: waiting pending', { count: pending.length, totalBytes });
+                    await Promise.allSettled(pending);
+                    console.log('[record] onstop: finalize complete', { totalBytes });
+                    await electron.recordCloseFile(sessionId);
+                    await addRecordedToLibrary(filePath, 'screen');
+                    cleanupTimer();
+                    setRecordMode(undefined);
+                    console.log('[record] onstop: session closed and media added', { sessionId, filePath });
+                } catch (e) {
+                    console.error('[record] finalize failed', e);
+                }
             };
             console.log('[record] starting MediaRecorder with timeslice=1000ms');
             rec.start(1000);
-            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId };
+            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes };
             startTimer('screen');
             console.log('[record] startScreenRecording: recorder active');
         } catch (err) {
@@ -400,20 +425,32 @@ export default function App() {
 
             const rec1 = new MediaRecorder(combinedScreenStream, mimeType ? { mimeType } : undefined);
             const rec2 = new MediaRecorder(camStream, mimeType ? { mimeType } : undefined);
-
+            const pending1: Promise<any>[] = [];
+            const pending2: Promise<any>[] = [];
+            let bytes1 = 0, bytes2 = 0;
             rec1.ondataavailable = async (evt: BlobEvent) => {
-                if (evt.data && evt.data.size)
-                    await electron.recordAppendChunk(f1.sessionId, await evt.data.arrayBuffer());
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); bytes1 += buf.byteLength; console.log('[record:pip] screen chunk', { size: buf.byteLength, bytes1 }); await electron.recordAppendChunk(f1.sessionId, buf);
+                    })(); pending1.push(p); await p.catch(() => { });
+                }
             };
             rec2.ondataavailable = async (evt: BlobEvent) => {
-                if (evt.data && evt.data.size)
-                    await electron.recordAppendChunk(f2.sessionId, await evt.data.arrayBuffer());
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); bytes2 += buf.byteLength; console.log('[record:pip] cam chunk', { size: buf.byteLength, bytes2 }); await electron.recordAppendChunk(f2.sessionId, buf);
+                    })(); pending2.push(p); await p.catch(() => { });
+                }
             };
 
             let stoppedCount = 0;
             const onStop = async () => {
                 stoppedCount++;
                 if (stoppedCount < 2) return;
+                console.log('[record:pip] onstop: waiting pending', { pending1: pending1.length, pending2: pending2.length, bytes1, bytes2 });
+                await Promise.allSettled(pending1);
+                await Promise.allSettled(pending2);
+                console.log('[record:pip] onstop: finalize complete', { bytes1, bytes2 });
                 await electron.recordCloseFile(f1.sessionId);
                 await electron.recordCloseFile(f2.sessionId);
                 const outPath = await electron.recordComposePiP({
@@ -437,6 +474,10 @@ export default function App() {
                 rec2,
                 session1: f1.sessionId,
                 session2: f2.sessionId,
+                pending1,
+                pending2,
+                bytes1,
+                bytes2,
             };
 
             startTimer('pip');
@@ -460,8 +501,14 @@ export default function App() {
                 recordersRef.current = null;
                 return;
             }
-            if (ref.rec1 && ref.rec1.state !== 'inactive') ref.rec1.stop();
-            if (ref.rec2 && ref.rec2.state !== 'inactive') ref.rec2.stop();
+            if (ref.rec1 && ref.rec1.state !== 'inactive') {
+                try { ref.rec1.requestData(); } catch { }
+                ref.rec1.stop();
+            }
+            if (ref.rec2 && ref.rec2.state !== 'inactive') {
+                try { ref.rec2.requestData(); } catch { }
+                ref.rec2.stop();
+            }
         } catch { }
     }
 
@@ -496,6 +543,7 @@ export default function App() {
         addItem(base);
         try {
             const meta = await (window as any).electron.invoke('media:getMetadata', filePath);
+            try { console.log('[record] media:getMetadata result', { id, filePath, meta }); } catch { }
             updateItem(id, { ...(meta || {}), path: filePath });
             const duration = (meta?.durationMs ?? 0);
             const startMs = useTimelineStore.getState().playheadMs;

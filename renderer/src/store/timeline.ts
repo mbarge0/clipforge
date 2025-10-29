@@ -85,7 +85,12 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         }));
     },
 
-    setPlayhead: (ms) => set({ playheadMs: Math.max(0, ms) }),
+    // diag: The following logging is temporary to diagnose playback/seek timing.
+    setPlayhead: (ms) => {
+        // eslint-disable-next-line no-console
+        try { console.log('[timeline] setPlayhead', ms); } catch { }
+        set({ playheadMs: Math.max(0, ms) });
+    },
     togglePlay: () => set((s) => ({ isPlaying: !s.isPlaying })),
 
     trimClip: (clipId, edge, deltaMs) => {
@@ -190,7 +195,11 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
         });
     },
 
-    markScrubRequest: (ts) => set({ lastScrubRequestedAt: ts }),
+    markScrubRequest: (ts) => {
+        // eslint-disable-next-line no-console
+        try { console.log('[timeline] markScrubRequest', ts); } catch { }
+        set({ lastScrubRequestedAt: ts });
+    },
 }));
 
 function sortClipsNonOverlap(clips: TimelineClip[]): TimelineClip[] {

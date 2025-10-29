@@ -49,18 +49,24 @@ contextBridge.exposeInMainWorld('electron', {
         }
         const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
         const existing = cache.get(filePath);
-        if (existing) return { url: existing };
+        if (existing) {
+            try { console.log('[preload.toObjectUrl] cache hit', { filePath, url: existing }); } catch { }
+            return { url: existing };
+        }
 
         const data = await fs.promises.readFile(filePath);
         const ext = path.extname(filePath || '').toLowerCase();
         const mime = mimeHint || (ext === '.webm' ? 'video/webm' : ext === '.mp4' ? 'video/mp4' : ext === '.mov' ? 'video/quicktime' : 'video/*');
+        try { console.log('[preload.toObjectUrl] read file', { filePath, bytes: data?.byteLength ?? data?.length, mime }); } catch { }
         const blob = new Blob([data], { type: mime });
         const url = URL.createObjectURL(blob);
         cache.set(filePath, url);
+        try { console.log('[preload.toObjectUrl] created URL', { url }); } catch { }
         return { url };
     },
     revokeObjectUrl: (url: string): void => {
         try {
+            console.log('[preload.revokeObjectUrl]', { url });
             if ('__CF_URL_CACHE__' in window) {
                 const cache: Map<string, string> = (window as any).__CF_URL_CACHE__;
                 for (const [k, v] of Array.from(cache.entries())) {

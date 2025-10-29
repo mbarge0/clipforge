@@ -53,6 +53,7 @@ export function Preview({ mediaIndex }: Props) {
             // Prefer existing File blob URL if present (imports)
             if (media.file) {
                 const url = getObjectUrl(clip.sourceId, media.file);
+                try { console.log('[preview] source=file-blob', { clipId: clip.id, name: media.name, url }); } catch { }
                 setSrcUrl(url);
                 objectUrlRef.current = undefined;
                 return;
@@ -63,6 +64,7 @@ export function Preview({ mediaIndex }: Props) {
                 try {
                     const { url } = await (window as any).electron.toObjectUrl(media.path);
                     if (!revoked) {
+                        try { console.log('[preview] source=object-url', { path: media.path, url }); } catch { }
                         setSrcUrl(url);
                         objectUrlRef.current = url;
                     }
@@ -81,19 +83,58 @@ export function Preview({ mediaIndex }: Props) {
             if (u && (window as any).electron?.revokeObjectUrl) {
                 try { (window as any).electron.revokeObjectUrl(u); } catch { }
             }
+            try { console.log('[preview] revoke object url (cleanup)', { url: u }); } catch { }
             objectUrlRef.current = undefined;
         };
     }, [currentClip, mediaIndex]);
+
+    // Attach detailed listeners for diagnostics on src changes
+    React.useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        const onLoadedMetadata = () => {
+            try { console.log('[preview] loadedmetadata', { duration: v.duration, videoWidth: v.videoWidth, videoHeight: v.videoHeight, readyState: v.readyState }); } catch { }
+        };
+        const onCanPlay = () => { try { console.log('[preview] canplay'); } catch { } };
+        const onCanPlayThrough = () => { try { console.log('[preview] canplaythrough'); } catch { } };
+        const onError = () => { try { console.log('[preview] error', { error: (v as any).error }); } catch { } };
+        const onPlaying = () => { try { console.log('[preview] playing'); } catch { } };
+        const onPause = () => { try { console.log('[preview] pause'); } catch { } };
+        const onSeeked = () => { try { console.log('[preview] seeked', { currentTime: v.currentTime }); } catch { } };
+        v.addEventListener('loadedmetadata', onLoadedMetadata);
+        v.addEventListener('canplay', onCanPlay);
+        v.addEventListener('canplaythrough', onCanPlayThrough);
+        v.addEventListener('error', onError);
+        v.addEventListener('playing', onPlaying);
+        v.addEventListener('pause', onPause);
+        v.addEventListener('seeked', onSeeked);
+        return () => {
+            v.removeEventListener('loadedmetadata', onLoadedMetadata);
+            v.removeEventListener('canplay', onCanPlay);
+            v.removeEventListener('canplaythrough', onCanPlayThrough);
+            v.removeEventListener('error', onError);
+            v.removeEventListener('playing', onPlaying);
+            v.removeEventListener('pause', onPause);
+            v.removeEventListener('seeked', onSeeked);
+        };
+    }, [srcUrl]);
 
     React.useEffect(() => {
         const v = videoRef.current;
         if (!v || !currentClip) return;
         const rel = Math.max(0, playheadMs - currentClip.startMs) / 1000 + currentClip.inMs / 1000;
         if (Math.abs(v.currentTime - rel) > 0.05) {
+            try { console.log('[preview] programmatic seek', { rel }); } catch { }
             try { v.currentTime = rel; } catch { }
         }
-        if (isPlaying && v.paused) v.play().catch(() => { });
-        if (!isPlaying && !v.paused) v.pause();
+        if (isPlaying && v.paused) {
+            try { console.log('[preview] calling play()'); } catch { }
+            v.play().catch(() => { });
+        }
+        if (!isPlaying && !v.paused) {
+            try { console.log('[preview] calling pause()'); } catch { }
+            v.pause();
+        }
     }, [playheadMs, isPlaying, currentClip]);
 
     // Advance playhead while playing (simple loop)
