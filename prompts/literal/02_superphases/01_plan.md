@@ -15,7 +15,7 @@ Confirm that each task directly maps to a specific part of the PRD or checklist.
 Perform regression planning referencing `/docs/operations/regression_manifest.md` to confirm regression dependencies and which previously completed phases or systems could be affected by this phase.
 
 Then implement the Design Step using the **Design Loop Template**.  
-Describe what the interface should look and feel like — layout, spacing, color system, typography, motion, and accessibility.  
+Describe what the interface should look and feel like — layout, spacing, color system, typography, motion, and accessibility. Use /docs/operations/ui_guidelines.md as a guidelines on color palette and style.
 Use textual wireframes or short descriptions of visual hierarchy and component states (hover, focus, disabled).  
 Pause if any design or scope assumption needs clarification before build.
 

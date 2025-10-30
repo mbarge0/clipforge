@@ -1,0 +1,12 @@
+/* Global theme variables aligned to Matt Barge personal brand */
+:root {
+    /* Brand */
+    --color-brand: #D0A866;
+    /* Goldenrod */
+    --color-brand-foreground: #0B0C10;
+    /* Dark foreground on brand surfaces */
+
+    /* Supporting */
+    --color-ice: #D2E0E9;
+    /* Ice Blue */
+}

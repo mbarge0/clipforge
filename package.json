@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Foundry subtemplate for Electron/Tauri desktop apps (ClipForge base)",
   "main": "main/main.js",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "preload:build": "tsc main/preload.ts --outDir main --target ES2020 --module commonjs",
     "dev": "cross-env VITE_DEV=1 concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electronmon .\"",

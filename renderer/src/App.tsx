@@ -39,7 +39,14 @@ export default function App() {
         pending2?: Promise<any>[];
         bytes1?: number;
         bytes2?: number;
+        stopping1?: boolean;
     } | null>(null);
+
+    // Live capture debug previews
+    const debugScreenRef = React.useRef<HTMLVideoElement | null>(null);
+    const debugCamRef = React.useRef<HTMLVideoElement | null>(null);
+    const [screenError, setScreenError] = React.useState<string | undefined>(undefined);
+    const [camError, setCamError] = React.useState<string | undefined>(undefined);
 
     const playheadMs = useTimelineStore((s) => s.playheadMs);
     const togglePlay = useTimelineStore((s) => s.togglePlay);
@@ -281,8 +288,8 @@ export default function App() {
         e.dataTransfer.effectAllowed = 'copy';
     }
 
-    const dropBorder = isDragging ? '#6E56CF' : '#2A2A31';
-    const dropBg = isDragging ? 'rgba(110, 86, 207, 0.08)' : 'transparent';
+    const dropBorder = isDragging ? 'var(--color-brand)' : '#2A2A31';
+    const dropBg = isDragging ? 'rgba(208, 168, 102, 0.12)' : 'transparent';
 
     // --- Recording implementation ---
     async function startScreenRecording() {
@@ -297,23 +304,63 @@ export default function App() {
                 console.log('[record] startScreenRecording: test-mode mock active', { mockPath });
                 return;
             }
-            console.log('[record] getDisplayMedia availability:', typeof (navigator.mediaDevices as any)?.getDisplayMedia);
-            const sources = await electron.getDesktopSources({ types: ['screen'] });
-            const source = sources[0];
-            const display = await navigator.mediaDevices.getUserMedia({
+            // Use preload bridge to obtain desktop sources
+            if (typeof (window as any).electron?.getDesktopSources !== 'function') {
+                console.warn('[record] getDesktopSources missing from bridge');
+                showToast('error', 'Bridge missing getDesktopSources. Relaunch app.');
+                throw new Error('no_bridge_getDesktopSources');
+            }
+            const sources: any[] = await (window as any).electron.getDesktopSources({ types: ['screen'] });
+            const source = sources.find((s: any) => s.name === 'Entire Screen') || sources[0];
+            if (!source) {
+                console.warn('[record] No screen sources detected');
+                showToast('error', 'No screens detected. Enable Screen Recording and relaunch.');
+                throw new Error('no_screen_source');
+            }
+            console.log('[record] selected source:', { id: source.id, name: source.name });
+            const display: MediaStream = await navigator.mediaDevices.getUserMedia({
                 audio: false,
                 video: {
                     mandatory: {
                         chromeMediaSource: 'desktop',
                         chromeMediaSourceId: source.id,
-                        minWidth: 1280,
-                        maxWidth: 3840,
-                        minHeight: 720,
-                        maxHeight: 2160,
+                        maxFrameRate: 30,
                     },
                 },
             } as any);
-            console.log('[record] getDisplayMedia resolved: tracks=', display?.getTracks?.().length, display?.getTracks?.().map((t: MediaStreamTrack) => ({ kind: t.kind, enabled: t.enabled })));
+            const vCount = (display.getVideoTracks?.() || []).length;
+            try { console.log('[record] got screen stream', vCount, 'video tracks'); } catch { }
+            if (vCount === 0) {
+                console.warn('[record] no video track detected — Screen Recording permission may be missing');
+                showToast('error', 'No video track. Enable Screen Recording in System Settings and relaunch.');
+                setScreenError('Screen capture failed');
+            } else {
+                setScreenError(undefined);
+            }
+
+            // Attach live screen preview
+            try {
+                const sv = debugScreenRef.current;
+                if (sv) {
+                    (sv as any).srcObject = display;
+                    await sv.play().catch(() => { });
+                    console.log('[record] attached screen preview');
+                }
+            } catch { }
+
+            // Acquire webcam preview in parallel
+            try {
+                console.log('[record] requesting webcam…');
+                const cam = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                console.log('[record] getUserMedia success (webcam):', { v: cam.getVideoTracks().length, a: cam.getAudioTracks().length });
+                const cv = debugCamRef.current;
+                if (cv) { (cv as any).srcObject = cam; await cv.play().catch(() => { }); console.log('[record] attached webcam preview'); }
+                setCamError(undefined);
+            } catch (e) {
+                console.warn('[record] webcam capture failed', e);
+                setCamError('Webcam capture failed');
+            }
+
             const stream = await combineWithMic(display);
             console.log('[record] combineWithMic resolved: tracks=', stream?.getTracks?.().length, stream?.getTracks?.().map((t: MediaStreamTrack) => ({ kind: t.kind, enabled: t.enabled })));
             const mimeType = pickMimeType();
@@ -608,8 +655,8 @@ export default function App() {
                     <button
                         onClick={openPicker}
                         style={{
-                            background: '#6E56CF',
-                            color: '#fff',
+                            background: 'var(--color-brand)',
+                            color: 'var(--color-brand-foreground)',
                             border: 'none',
                             borderRadius: 8,
                             padding: '8px 12px',
@@ -621,8 +668,8 @@ export default function App() {
                     <button
                         onClick={() => setShowExport(true)}
                         style={{
-                            background: '#0EA5E9',
-                            color: '#0B0C10',
+                            background: 'var(--color-brand)',
+                            color: 'var(--color-brand-foreground)',
                             border: 'none',
                             borderRadius: 8,
                             padding: '8px 12px',
@@ -636,7 +683,7 @@ export default function App() {
                         onClick={() => void startScreenRecording()}
                         disabled={!!recordMode}
                         aria-label="Record Screen"
-                        style={{ background: recordMode ? '#1F2937' : '#10B981', color: '#0B0C10', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
                     >
                         Record Screen
                     </button>
@@ -644,7 +691,7 @@ export default function App() {
                         onClick={() => void startWebcamRecording()}
                         disabled={!!recordMode}
                         aria-label="Record Webcam"
-                        style={{ background: recordMode ? '#1F2937' : '#F59E0B', color: '#0B0C10', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
                     >
                         Record Webcam
                     </button>
@@ -652,7 +699,7 @@ export default function App() {
                         onClick={() => void startPiPRecording()}
                         disabled={!!recordMode}
                         aria-label="Record Screen + Webcam"
-                        style={{ background: recordMode ? '#1F2937' : '#EF4444', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
                     >
                         Screen+Webcam
                     </button>
@@ -774,8 +821,8 @@ export default function App() {
                                                 <span
                                                     style={{
                                                         fontSize: 10,
-                                                        color: '#6E56CF',
-                                                        border: '1px solid #6E56CF',
+                                                        color: 'var(--color-brand)',
+                                                        border: '1px solid var(--color-brand)',
                                                         borderRadius: 999,
                                                         padding: '0 6px',
                                                     }}
@@ -819,6 +866,27 @@ export default function App() {
                 {/* TIMELINE + PREVIEW */}
                 <section>
                     <div style={{ display: 'grid', gap: 12 }}>
+                        {/* Live capture debug preview row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Screen (live)</div>
+                                <video ref={debugScreenRef} muted playsInline style={{ width: '100%', height: 180, objectFit: 'cover' }} />
+                                {screenError ? (
+                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
+                                        {screenError}
+                                    </div>
+                                ) : null}
+                            </div>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Webcam (live)</div>
+                                <video ref={debugCamRef} muted playsInline style={{ width: '100%', height: 180, objectFit: 'cover' }} />
+                                {camError ? (
+                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
+                                        {camError}
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
                         <Preview mediaIndex={mediaIndex} />
                         <Timeline mediaIndex={mediaIndex} />
                     </div>
@@ -875,7 +943,7 @@ export default function App() {
                                             showToast('error', 'Failed to start export');
                                         }
                                     }}
-                                    style={{ background: destinationPath ? '#0EA5E9' : '#1F2937', color: '#0B0C10', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: destinationPath ? 'pointer' : 'not-allowed' }}
+                                    style={{ background: destinationPath ? 'var(--color-brand)' : '#1F2937', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: destinationPath ? 'pointer' : 'not-allowed' }}
                                     aria-label="Start export"
                                     disabled={!destinationPath}
                                 >
@@ -888,7 +956,7 @@ export default function App() {
                             <div style={{ marginTop: 16 }}>
                                 <div style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 6 }}>{exportStatus || 'Exporting…'}</div>
                                 <div style={{ height: 10, background: '#111827', border: '1px solid #374151', borderRadius: 999, overflow: 'hidden' }}>
-                                    <div style={{ width: `${exportProgress}%`, height: '100%', background: '#0EA5E9' }} />
+                                    <div style={{ width: `${exportProgress}%`, height: '100%', background: 'var(--color-brand)' }} />
                                 </div>
                                 <div style={{ color: '#E5E7EB', fontSize: 12, marginTop: 6 }}>{Math.round(exportProgress)}%</div>
                             </div>

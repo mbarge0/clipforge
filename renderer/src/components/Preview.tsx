@@ -49,6 +49,10 @@ export function Preview({ mediaIndex }: Props) {
         return sortedTracks[0]?.clips[0] || sortedTracks[1]?.clips[0];
     }, [sortedTracks, selectedClipId, playheadMs]);
 
+    const currentMedia = React.useMemo(() => {
+        return currentClip ? mediaIndex[currentClip.sourceId] : undefined;
+    }, [currentClip, mediaIndex]);
+
     React.useEffect(() => {
         const clip = currentClip;
         let revoked = false;
@@ -62,29 +66,7 @@ export function Preview({ mediaIndex }: Props) {
                 console.log('[preview.detect]', { clipId: clip?.id, name: (media as any)?.name, path: (media as any)?.path, finalPath: (media as any)?.finalPath, recorded });
             } catch { }
 
-            // If recorded, resolve a file-based URL via bridge before blob logic
-            try {
-                const recorded = isRecordedClip(media as any, clip as any);
-                const recPath = (media as any)?.finalPath || (media as any)?.path;
-                if (recorded && recPath && (window as any).electron?.toMediaUrl) {
-                    try { console.log('[preview.url] trying toMediaUrl', { path: recPath }); } catch { }
-                    const { url } = await (window as any).electron.toMediaUrl(String(recPath));
-                    if (url) {
-                        if (!revoked) {
-                            try { console.log('[preview.url] using file URL', { path: recPath, url }); } catch { }
-                            setSrcUrl(url);
-                            // Do not set objectUrlRef for file:// or media:// to avoid revoke attempts
-                            objectUrlRef.current = undefined;
-                        }
-                        return; // prevent blob fallback
-                    } else {
-                        try { console.warn('[preview.url] no URL returned from toMediaUrl'); } catch { }
-                    }
-                }
-            } catch (err) {
-                try { console.warn('[preview.url] toMediaUrl failed', err); } catch { }
-                // fall through to blob logic
-            }
+            // Recorded URL resolution handled in dedicated effect below
 
             // Imported files: use the provided File blob
             if (media.file) {
@@ -108,6 +90,31 @@ export function Preview({ mediaIndex }: Props) {
             objectUrlRef.current = undefined;
         };
     }, [currentClip, mediaIndex]);
+
+    // Resolve file-based URL for recorded clips after mount and when media path changes
+    React.useEffect(() => {
+        const clip = currentClip;
+        const media = currentMedia as any;
+        if (!clip || !media) return;
+        const path = media?.finalPath || media?.path;
+        const recorded = media?.recorded === true || (typeof path === 'string' && path.includes('/clipforge-record-'));
+        if (!recorded || !path || !(window as any).electron?.getMediaDataUrl) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                try { console.log('[preview.dataurl] requesting base64 data', { path }); } catch { }
+                const dataUrl = await (window as any).electron.getMediaDataUrl(String(path));
+                if (!cancelled && dataUrl) {
+                    try { console.log('[preview.dataurl] using base64 data URL'); } catch { }
+                    setSrcUrl(dataUrl);
+                    objectUrlRef.current = dataUrl;
+                }
+            } catch (err) {
+                try { console.warn('[preview.dataurl] failed toMediaUrl', err); } catch { }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [currentClip, currentMedia?.path, currentMedia?.finalPath]);
 
     // Attach detailed listeners for diagnostics on src changes
     React.useEffect(() => {

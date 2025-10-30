@@ -238,8 +238,8 @@ export function Timeline({ mediaIndex }: Props) {
                                             width,
                                             background: track.id === 't1' ? '#0EA5E9' : '#10B981',
                                             opacity: 0.85,
-                                            border: isSelected ? '2px solid #F59E0B' : '1px solid #0C4A6E',
-                                            boxShadow: isSelected ? '0 0 0 2px #38BDF8' : undefined, // focus ring
+                                            border: isSelected ? '2px solid var(--color-brand)' : '1px solid #0C4A6E',
+                                            boxShadow: isSelected ? '0 0 0 2px var(--color-brand)' : undefined, // focus ring
                                             borderRadius: 6,
                                             color: '#0B1220',
                                             display: 'flex',

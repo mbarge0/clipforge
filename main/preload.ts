@@ -48,6 +48,16 @@ contextBridge.exposeInMainWorld('electron', {
         return { url };
     },
 
+    getMediaDataUrl: async (filePath: string): Promise<string | undefined> => {
+        try {
+            const dataUrl = await ipcRenderer.invoke('media:serve', filePath);
+            try { console.log('[preload.getMediaDataUrl]', { filePath, ok: !!dataUrl }); } catch { }
+            return dataUrl;
+        } catch {
+            return undefined;
+        }
+    },
+
     // Recording API
     recordOpenFile: (opts?: { extension?: string }) => ipcRenderer.invoke('record:openFile', opts ?? {}),
     recordAppendChunk: (sessionId: string, chunk: ArrayBuffer | Uint8Array) => {
@@ -79,6 +89,7 @@ declare global {
             getDesktopSources: (opts?: { types?: ('screen' | 'window')[] }) => Promise<Array<any>>;
 
             toMediaUrl: (filePath: string) => Promise<{ url: string }>;
+            getMediaDataUrl: (filePath: string) => Promise<string | undefined>;
 
             // Recording
             recordOpenFile: (opts?: { extension?: string }) => Promise<{ sessionId: string; filePath: string }>;

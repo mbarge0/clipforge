@@ -1,10 +1,9 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, protocol, session } from 'electron';
-import ffmpegPath from 'ffmpeg-static';
-import ffmpeg from 'fluent-ffmpeg';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
+const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, protocol, session, systemPreferences } = require('electron');
+const ffmpegPath = require('ffmpeg-static');
+const ffmpeg = require('fluent-ffmpeg');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // --- DEV STABILITY PATCHES ---
 // Disable GPU & hardware acceleration (prevents macOS Electron crash loop)
@@ -14,17 +13,31 @@ app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('no-sandbox'); // Fixes SIGTRAP GPU sandbox crash
 
-// ✅ Enable screen capture in Chromium
+// ✅ Enable screen capture in Chromium (macOS ScreenCaptureKit + display capture)
 app.commandLine.appendSwitch('enable-usermedia-screen-capturing');
-app.commandLine.appendSwitch('enable-features', 'DesktopCapture');
+app.commandLine.appendSwitch('enable-experimental-web-platform-features');
+// Merge multiple features in one switch to avoid overriding
+app.commandLine.appendSwitch('enable-features', 'ScreenCaptureKitMac,DesktopCapture');
 
-// --- Resolve paths ---
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// --- Resolve paths --- (CommonJS provides __dirname)
 
 let win;
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
+
+// --- macOS Screen Recording Permission ---
+async function ensureScreenRecordingAccess() {
+    if (process.platform !== 'darwin') return true;
+    try {
+        // systemPreferences.askForMediaAccess('screen') is not supported on macOS and throws.
+        // Rely on the normal Chromium getDisplayMedia / desktopCapturer permission flow instead.
+        console.log('[permissions] Skipping askForMediaAccess("screen") — unsupported on macOS.');
+        return true;
+    } catch (e) {
+        console.warn('[permissions] askForMediaAccess(screen) failed', e);
+        return true; // do not block if API not available
+    }
+}
 // --- Create BrowserWindow ---
 function createWindow() {
     win = new BrowserWindow({
@@ -36,12 +49,15 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
             experimentalFeatures: true,
+            webSecurity: false,
+            allowRunningInsecureContent: true,
+            media: true,
             preload: path.join(__dirname, 'preload.js'),
         },
     });
 
     // --- Determine URL based on environment ---
-    const isDev = process.env.VITE_DEV?.toString().trim() === '1';
+    const isDev = !app.isPackaged || process.env.VITE_DEV?.toString().trim() === '1';
     const startURL = isDev
         ? 'http://localhost:5173'
         : `file://${path.join(__dirname, '../dist/index.html')}`;
@@ -51,6 +67,7 @@ function createWindow() {
 
     // Load app
     win.loadURL(startURL);
+    win.webContents.openDevTools({ mode: 'detach' });
 
     // --- Dev-only behavior ---
     if (isDev) {
@@ -65,7 +82,8 @@ function createWindow() {
 }
 
 // --- Electron Lifecycle ---
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+    await ensureScreenRecordingAccess();
     // Grant display capture and media permissions proactively
     try {
         const s = session?.defaultSession;
@@ -133,17 +151,25 @@ app.whenReady().then(() => {
             }
         });
         console.log('[protocol] media:// registered');
-        try {
-            const handled = protocol.isProtocolHandledSync('media');
-            console.log('[protocol] media handled?', handled);
-        } catch (e) {
-            console.warn('[protocol] isProtocolHandledSync threw', e);
-        }
     } catch (e) {
         console.warn('[protocol] registerStreamProtocol failed', e);
     }
 
     createWindow();
+
+    // Grant display-capture and media permissions for this window's session
+    try {
+        const ses = win.webContents.session;
+        ses.setPermissionRequestHandler((_, permission, callback) => {
+            if (permission === 'media' || permission === 'display-capture') {
+                console.log('[main] granting screen capture permission');
+                return callback(true);
+            }
+            return callback(false);
+        });
+    } catch (e) {
+        console.warn('[main] setPermissionRequestHandler failed', e);
+    }
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -197,6 +223,21 @@ ipcMain.handle('media:getPathForFileName', async (_event, nameOrPath) => {
         return undefined;
     } catch (err) {
         console.log('[media:getPathForFileName]', nameOrPath, '→ error:', err?.message || err);
+        return undefined;
+    }
+});
+
+// ---------------- Screen Source IPC ----------------
+ipcMain.handle('screen:getSource', async () => {
+    try {
+        const sources = await desktopCapturer.getSources({ types: ['screen'] });
+        const pick = sources.find((s) => s.name === 'Entire Screen')
+            || sources.find((s) => s.name === 'Screen 1')
+            || sources[0];
+        try { console.log('[screen:getSource]', sources.map(s => ({ id: s.id, name: s.name })), '→', pick && { id: pick.id, name: pick.name }); } catch { }
+        return pick ? pick.id : undefined;
+    } catch (e) {
+        console.warn('[screen:getSource] failed', e);
         return undefined;
     }
 });
@@ -534,4 +575,19 @@ ipcMain.handle('export:cancel', async (_event, jobId) => {
         try { job.cancel(); return true; } catch { return false; }
     }
     return false;
+});
+
+// Serve media as base64 data URL (MP4)
+ipcMain.handle('media:serve', async (_event, filePath) => {
+    try {
+        const abs = path.resolve(String(filePath));
+        const data = fs.readFileSync(abs);
+        const base64 = Buffer.from(data).toString('base64');
+        const url = `data:video/mp4;base64,${base64}`;
+        try { console.log('[media:serve] success', { path: abs, bytes: data.length }); } catch { }
+        return url;
+    } catch (err) {
+        console.warn('[media:serve] failed', err);
+        return undefined;
+    }
 });
