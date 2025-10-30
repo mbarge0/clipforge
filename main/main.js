@@ -485,14 +485,17 @@ ipcMain.handle('export:start', (event, payload) => {
                 const s = segments[i];
                 const tmpOut = path.join(tempDir, `seg-${String(i).padStart(3, '0')}.mp4`);
                 tempSegments.push(tmpOut);
-                const durationSec = Math.max(0, (s.outMs - s.inMs) / 1000);
+                const durationSec = Math.max(0.05, (s.outMs - s.inMs) / 1000);
                 await new Promise((resolve, reject) => {
                     const proc = ffmpeg()
                         .input(s.filePath)
-                        .inputOptions([`-ss ${s.inMs / 1000}`])
-                        .outputOptions(['-t', String(durationSec), '-y'])
+                        // Use output-side trim for frame-accurate cuts and avoid black first frames
+                        .setStartTime(s.inMs / 1000)
+                        .duration(durationSec)
+                        .outputOptions(['-y', '-r', '30', '-vsync', 'cfr', '-g', '60'])
                         .videoCodec('libx264')
                         .audioCodec('aac')
+                        .audioFrequency(48000)
                         .outputOptions(['-pix_fmt', 'yuv420p'])
                         .videoFilters(scaleFilterFor(resolution))
                         .on('start', () => {
@@ -517,17 +520,19 @@ ipcMain.handle('export:start', (event, payload) => {
             }
 
             if (cancelled) throw new Error('CANCELLED');
-
-            // 2) Concat
-            const listPath = path.join(tempDir, 'concat_list.txt');
-            const listContent = tempSegments.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-            fs.writeFileSync(listPath, listContent, 'utf8');
-
+            // 2) Concat via filter (decode + re-encode) for smooth, consistent PTS
             await new Promise((resolve, reject) => {
-                const proc = ffmpeg()
-                    .input(listPath)
-                    .inputOptions(['-f', 'concat', '-safe', '0'])
-                    .outputOptions(['-c', 'copy', '-y'])
+                const proc = ffmpeg();
+                tempSegments.forEach((p) => proc.input(p));
+                const n = tempSegments.length;
+                const inputs = Array.from({ length: n }, (_, i) => `[${i}:v][${i}:a]`).join('');
+                const filter = `${inputs}concat=n=${n}:v=1:a=1[v][a]`;
+                proc
+                    .complexFilter([filter])
+                    .outputOptions(['-map', '[v]', '-map', '[a]', '-r', '30', '-vsync', 'cfr', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-y'])
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .audioFrequency(48000)
                     .on('start', () => {
                         activeJobs.set(jobId, { ...activeJobs.get(jobId), currentProc: proc.ffmpegProc });
                         emitProgress(99, 'finalizing');

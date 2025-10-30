@@ -223,7 +223,7 @@ export function Timeline({ mediaIndex }: Props) {
                 <div>Playhead: {Math.round(playheadMs / 1000)}s</div>
                 <div>Grid: {SNAP_MS}ms • Scale: {100} px/s</div>
             </div>
-            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #243047', borderRadius: 8, background: 'var(--navy)', padding: 8, overflowX: 'auto', height: 160 }}>
+            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #243047', borderRadius: 8, background: 'var(--navy)', padding: 8, overflowX: 'auto', height: 200 }}>
                 {/* Ruler */}
                 <div style={{ width: contentWidth }}>
                     <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B1220', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
