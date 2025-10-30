@@ -232,15 +232,15 @@ export function Preview({ mediaIndex }: Props) {
     }, [lastScrubRequestedAt]);
 
     return (
-        <div style={{ background: '#0B0C10', border: '1px solid #2A2A31', borderRadius: 12, padding: 12 }}>
+        <div style={{ background: 'var(--navy)', border: '1px solid #243047', borderRadius: 12, padding: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <strong style={{ color: '#E5E7EB' }}>Preview</strong>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#9CA3AF', fontSize: 12 }}>
+                <strong style={{ color: 'var(--color-brand)' }}>Preview</strong>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#E5E7EB', fontSize: 12 }}>
                     <div>FPS: <span style={{ color: '#E5E7EB' }}>{fps}</span></div>
                     <div>Scrub: <span style={{ color: '#E5E7EB' }}>{scrubLatencyMs != null ? `${scrubLatencyMs}ms` : '—'}</span></div>
                     <button
                         onClick={() => togglePlay()}
-                        style={{ background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}
+                        style={{ background: 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}
                         aria-label={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
                     >
                         {isPlaying ? 'Pause' : 'Play'} (Space)

@@ -219,20 +219,20 @@ export function Timeline({ mediaIndex }: Props) {
 
     return (
         <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#9CA3AF', fontSize: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#E5E7EB', fontSize: 12 }}>
                 <div>Playhead: {Math.round(playheadMs / 1000)}s</div>
                 <div>Grid: {SNAP_MS}ms • Scale: {100} px/s</div>
             </div>
-            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8, overflowX: 'auto', height: 160 }}>
+            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #243047', borderRadius: 8, background: 'var(--navy)', padding: 8, overflowX: 'auto', height: 160 }}>
                 {/* Ruler */}
                 <div style={{ width: contentWidth }}>
-                    <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
+                    <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B1220', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
                         <Ruler playheadMs={playheadMs} width={contentWidth} />
                     </div>
                     {/* Tracks */}
                     <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
                         {tracks.map((track) => (
-                            <div key={track.id} data-trackid={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F1015', border: '1px solid #1F2430', borderRadius: 6 }}>
+                            <div key={track.id} data-trackid={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F172A', border: '1px solid #1F2430', borderRadius: 6 }}>
                                 {track.clips.map((clip) => {
                                     const left = msToPx(clip.startMs);
                                     const width = msToPx(clipDurationMs(clip));
