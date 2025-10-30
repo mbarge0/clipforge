@@ -1,5 +1,5 @@
 {
-  "name": "foundry-desktop",
+  "name": "ClipForge",
   "version": "0.1.0",
   "description": "Foundry subtemplate for Electron/Tauri desktop apps (ClipForge base)",
   "main": "main/main.js",
@@ -10,7 +10,8 @@
     "start": "electron-forge start",
     "make": "electron-forge make",
     "package": "electron-forge package",
-    "test:e2e": "playwright test --project=chromium"
+    "test:e2e": "playwright test --project=chromium",
+    "build": "vite build"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",

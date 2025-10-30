@@ -57,27 +57,20 @@ function createWindow() {
     });
 
     // --- Determine URL based on environment ---
-    const isDev = !app.isPackaged || process.env.VITE_DEV?.toString().trim() === '1';
-    const startURL = isDev
-        ? 'http://localhost:5173'
-        : `file://${path.join(__dirname, '../dist/index.html')}`;
-
+    const isDev = !app.isPackaged || process.env.VITE_DEV === '1';
     console.log(`[main] Launching ClipForge in ${isDev ? 'DEV' : 'PROD'} mode`);
-    console.log(`[main] Loading URL → ${startURL}`);
 
-    // Load app
-    win.loadURL(startURL);
-    win.webContents.openDevTools({ mode: 'detach' });
-
-    // --- Dev-only behavior ---
     if (isDev) {
+        win.loadURL('http://localhost:5173');
         win.webContents.openDevTools({ mode: 'detach' });
-
         // Retry if renderer isn't ready yet (Vite warmup)
         win.webContents.on('did-fail-load', () => {
             console.warn('⚠️ Renderer not ready — retrying...');
-            setTimeout(() => win.loadURL(startURL), 1000);
+            setTimeout(() => win.loadURL('http://localhost:5173'), 1000);
         });
+    } else {
+        const indexPath = path.join(__dirname, '../dist/index.html');
+        win.loadFile(indexPath);
     }
 }
 
