@@ -918,21 +918,22 @@ export default function App() {
 
                 {/* TIMELINE + PREVIEW */}
                 <section>
-                    <div style={{ display: 'grid', gap: 12 }}>
-                        {/* Live capture debug preview row */}
+                    {/* Right column: fixed row heights to keep everything visible at launch */}
+                    <div style={{ display: 'grid', gap: 12, gridTemplateRows: '180px 320px 180px' }}>
+                        {/* Live capture row */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden' }}>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden', height: '100%' }}>
                                 <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Screen (live)</div>
-                                <video ref={debugScreenRef} muted playsInline style={{ width: '100%', height: 180, objectFit: 'cover' }} />
+                                <video ref={debugScreenRef} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 {screenError ? (
                                     <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
                                         {screenError}
                                     </div>
                                 ) : null}
                             </div>
-                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden' }}>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden', height: '100%' }}>
                                 <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Webcam (live)</div>
-                                <video ref={debugCamRef} muted playsInline style={{ width: '100%', height: 180, objectFit: 'cover' }} />
+                                <video ref={debugCamRef} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 {camError ? (
                                     <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
                                         {camError}
@@ -940,8 +941,12 @@ export default function App() {
                                 ) : null}
                             </div>
                         </div>
-                        <Preview mediaIndex={mediaIndex} />
-                        <Timeline mediaIndex={mediaIndex} />
+                        <div style={{ height: '100%', overflow: 'hidden', border: '1px solid #0B0C10', borderRadius: 8 }}>
+                            <Preview mediaIndex={mediaIndex} />
+                        </div>
+                        <div style={{ height: '100%' }}>
+                            <Timeline mediaIndex={mediaIndex} />
+                        </div>
                     </div>
                 </section>
             </main>

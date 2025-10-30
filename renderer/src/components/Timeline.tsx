@@ -35,6 +35,13 @@ export function Timeline({ mediaIndex }: Props) {
         return () => ro.disconnect();
     }, []);
 
+    // Always start from the leftmost edge when content or tracks change
+    React.useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollLeft = 0;
+        }
+    }, [tracks.length]);
+
     async function onDrop(e: React.DragEvent, trackId: string) {
         e.preventDefault();
         const rect = containerRef.current?.getBoundingClientRect();
@@ -216,7 +223,7 @@ export function Timeline({ mediaIndex }: Props) {
                 <div>Playhead: {Math.round(playheadMs / 1000)}s</div>
                 <div>Grid: {SNAP_MS}ms • Scale: {100} px/s</div>
             </div>
-            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8, overflowX: 'auto' }}>
+            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8, overflowX: 'auto', height: 160 }}>
                 {/* Ruler */}
                 <div style={{ width: contentWidth }}>
                     <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>

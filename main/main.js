@@ -41,10 +41,10 @@ async function ensureScreenRecordingAccess() {
 // --- Create BrowserWindow ---
 function createWindow() {
     win = new BrowserWindow({
-        width: 1000,
-        height: 700,
-        minWidth: 800,
-        minHeight: 600,
+        width: 1280,
+        height: 900,
+        minWidth: 1120,
+        minHeight: 780,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
