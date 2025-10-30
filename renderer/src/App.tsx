@@ -431,24 +431,58 @@ export default function App() {
     async function startWebcamRecording() {
         if (recordMode) return;
         try {
+            console.log('[record] startWebcamRecording: begin');
             const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            console.log('[record] webcam tracks:', { v: stream.getVideoTracks().length, a: stream.getAudioTracks().length });
+            // Attach live webcam preview
+            try {
+                const cv = debugCamRef.current; if (cv) { (cv as any).srcObject = stream; await cv.play().catch(() => { }); console.log('[record] attached webcam live preview'); }
+            } catch { }
+
             const mimeType = pickMimeType();
             const { sessionId, filePath } = await electron.recordOpenFile({ extension: 'webm' });
+            console.log('[record] webcam recordOpenFile response:', { sessionId, filePath });
             const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+            const pending: Promise<any>[] = [];
+            let totalBytes = 0;
+            let finalResolved = false;
+            let finalResolve: () => void = () => { };
+            const final = new Promise<void>((res) => { finalResolve = res; });
+
             rec.ondataavailable = async (evt: BlobEvent) => {
                 if (evt.data && evt.data.size) {
-                    const buf = await evt.data.arrayBuffer();
-                    await electron.recordAppendChunk(sessionId, buf);
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); totalBytes += buf.byteLength;
+                        console.log('[record:webcam] chunk', { size: buf.byteLength, totalBytes });
+                        await electron.recordAppendChunk(sessionId, buf);
+                    })();
+                    pending.push(p);
+                    await p.catch(() => { });
+                    if (recordersRef.current?.rec1 === rec && (recordersRef.current as any)?.stopping1 && !finalResolved) {
+                        finalResolved = true; try { await p; } catch { }; try { finalResolve(); } catch { }
+                    }
                 }
             };
             rec.onstop = async () => {
-                await electron.recordCloseFile(sessionId);
-                await addRecordedToLibrary(filePath, 'webcam');
-                cleanupTimer();
-                setRecordMode(undefined);
+                try {
+                    console.log('[record:webcam] onstop: waiting pending', { count: pending.length, totalBytes });
+                    try { await final; } catch { }
+                    await Promise.allSettled(pending);
+                    await new Promise((r) => setTimeout(r, 150));
+                    console.log('[record:webcam] finalize complete', { totalBytes });
+                    const closedPath = await electron.recordCloseFile(sessionId);
+                    const finalPath = (typeof closedPath === 'string' && closedPath) ? closedPath : filePath;
+                    console.log('[record:webcam] close result', { closedPath, finalPath });
+                    await addRecordedToLibrary(finalPath, 'webcam');
+                    cleanupTimer(); setRecordMode(undefined);
+                } catch (e) {
+                    console.error('[record:webcam] finalize failed', e);
+                }
             };
+            console.log('[record:webcam] starting MediaRecorder with timeslice=1000ms');
             rec.start(1000);
-            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId };
+            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes, stopping1: false } as any;
             startTimer('webcam');
         } catch {
             showToast('error', 'Failed to start webcam recording');
