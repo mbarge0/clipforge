@@ -28,6 +28,7 @@ export function Preview({ mediaIndex }: Props) {
     const objectUrlRef = React.useRef<string | undefined>(undefined);
     const [fps, setFps] = React.useState<number>(0);
     const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(undefined);
+    const [hasMetadata, setHasMetadata] = React.useState<boolean>(false);
     const playheadRef = React.useRef<number>(playheadMs);
     React.useEffect(() => { playheadRef.current = playheadMs; }, [playheadMs]);
     const lastScrubRequestedAt = useTimelineStore((s) => s.lastScrubRequestedAt);
@@ -73,11 +74,13 @@ export function Preview({ mediaIndex }: Props) {
             if (!recorded && media.file) {
                 const url = getObjectUrl(clip.sourceId, media.file);
                 try { console.log('[preview] source=file-blob', { clipId: clip.id, name: media.name, url }); } catch { }
+                setHasMetadata(false);
                 setSrcUrl(url);
                 objectUrlRef.current = undefined;
                 return;
             }
 
+            setHasMetadata(false);
             setSrcUrl(undefined);
             objectUrlRef.current = undefined;
         })();
@@ -107,6 +110,7 @@ export function Preview({ mediaIndex }: Props) {
                 const dataUrl = await (window as any).electron.getMediaDataUrl(String(path));
                 if (!cancelled && dataUrl) {
                     try { console.log('[preview.dataurl] using base64 data URL'); } catch { }
+                    setHasMetadata(false);
                     setSrcUrl(dataUrl);
                     objectUrlRef.current = dataUrl;
                 }
@@ -123,6 +127,7 @@ export function Preview({ mediaIndex }: Props) {
         if (!v) return;
         const onLoadedMetadata = () => {
             try { console.log('[preview] loadedmetadata', { duration: v.duration, videoWidth: v.videoWidth, videoHeight: v.videoHeight, readyState: v.readyState }); } catch { }
+            setHasMetadata(true);
         };
         const onCanPlay = () => { try { console.log('[preview] canplay'); } catch { } };
         const onCanPlayThrough = () => { try { console.log('[preview] canplaythrough'); } catch { } };
@@ -150,7 +155,7 @@ export function Preview({ mediaIndex }: Props) {
 
     React.useEffect(() => {
         const v = videoRef.current;
-        if (!v || !currentClip) return;
+        if (!v || !currentClip || !hasMetadata) return;
         const rel = Math.max(0, playheadMs - currentClip.startMs) / 1000 + currentClip.inMs / 1000;
         if (Math.abs(v.currentTime - rel) > 0.05) {
             try { console.log('[preview] programmatic seek', { rel }); } catch { }
@@ -164,34 +169,34 @@ export function Preview({ mediaIndex }: Props) {
             try { console.log('[preview] calling pause()'); } catch { }
             v.pause();
         }
-    }, [playheadMs, isPlaying, currentClip]);
+    }, [playheadMs, isPlaying, currentClip, hasMetadata]);
 
     // Advance playhead while playing (simple loop)
     React.useEffect(() => {
         if (!isPlaying) return;
+        const v = videoRef.current;
+        if (!v || !currentClip) return;
         let rafId = 0;
-        let lastTs = performance.now();
+        const inSec = currentClip.inMs / 1000;
+        const endSec = (currentClip.outMs - currentClip.inMs) / 1000 + inSec;
         const lastTimelineEnd = sortedTracks.flatMap((t) => t.clips).reduce((acc, c) => Math.max(acc, c.startMs + (c.outMs - c.inMs)), 0);
-        const step = (now: number) => {
-            const dt = now - lastTs;
-            lastTs = now;
-            const next = playheadRef.current + dt;
-            // Determine active by track priority: Track 1 first, then Track 2
+        const step = () => {
+            // Drive timeline from the video's actual time for stability
+            const tSec = Math.min(endSec, Math.max(inSec, v.currentTime));
+            const tlMs = currentClip.startMs + Math.max(0, (tSec - inSec) * 1000);
+            if (Math.abs(playheadRef.current - tlMs) > 15) {
+                playheadRef.current = tlMs;
+                setPlayhead(tlMs);
+            }
+            // Auto-advance to next clip if crossing boundary
             let active: typeof currentClip | undefined;
             for (let ti = 0; ti < sortedTracks.length; ti++) {
                 const t = sortedTracks[ti];
-                const hit = t.clips.find((c) => next >= c.startMs && next < c.startMs + (c.outMs - c.inMs));
+                const hit = t.clips.find((c) => tlMs >= c.startMs && tlMs < c.startMs + (c.outMs - c.inMs));
                 if (hit) { active = hit; break; }
             }
-            if (active && active.id !== currentClip?.id) {
-                setSelection(active.id);
-            }
-            if (next > lastTimelineEnd + 50) {
-                togglePlay();
-                return;
-            }
-            playheadRef.current = next;
-            setPlayhead(next);
+            if (active && active.id !== currentClip?.id) setSelection(active.id);
+            if (tlMs > lastTimelineEnd + 50) { togglePlay(); return; }
             rafId = requestAnimationFrame(step);
         };
         rafId = requestAnimationFrame(step);
