@@ -5,11 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// --- DEV STABILITY PATCHES ---
-// Disable GPU & hardware acceleration (prevents macOS Electron crash loop)
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
+// --- Startup switches ---
+// NOTE: Do not disable GPU/hardware acceleration; it can cause black video frames on macOS.
+// app.disableHardwareAcceleration();
+// app.commandLine.appendSwitch('disable-gpu');
+// app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('no-sandbox'); // Fixes SIGTRAP GPU sandbox crash
 

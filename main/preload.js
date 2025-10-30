@@ -33,6 +33,28 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
     // Media helpers
     getPathForFileName: (nameOrPath) => electron_1.ipcRenderer.invoke('media:getPathForFileName', nameOrPath),
     getDesktopSources: (opts) => electron_1.ipcRenderer.invoke('desktop:getSources', opts),
+    // Media URL/Data helpers
+    toMediaUrl: async (filePath) => {
+        try {
+            const res = await electron_1.ipcRenderer.invoke('toMediaUrl', filePath);
+            const url = res && typeof res.url === 'string' ? res.url : '';
+            try { console.log('[preload.toMediaUrl]', { filePath, url }); } catch { }
+            return { url };
+        }
+        catch {
+            return { url: '' };
+        }
+    },
+    getMediaDataUrl: async (filePath) => {
+        try {
+            const dataUrl = await electron_1.ipcRenderer.invoke('media:serve', filePath);
+            try { console.log('[preload.getMediaDataUrl]', { filePath, ok: !!dataUrl }); } catch { }
+            return dataUrl;
+        }
+        catch {
+            return undefined;
+        }
+    },
     // Recording API
     recordOpenFile: (opts) => electron_1.ipcRenderer.invoke('record:openFile', opts ?? {}),
     recordAppendChunk: (sessionId, chunk) => {

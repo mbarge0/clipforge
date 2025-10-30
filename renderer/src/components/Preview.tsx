@@ -61,15 +61,16 @@ export function Preview({ mediaIndex }: Props) {
             const media = mediaIndex[clip.sourceId];
             if (!media) return setSrcUrl(undefined);
 
+            let recorded = false;
             try {
-                const recorded = isRecordedClip(media as any, clip as any);
+                recorded = isRecordedClip(media as any, clip as any);
                 console.log('[preview.detect]', { clipId: clip?.id, name: (media as any)?.name, path: (media as any)?.path, finalPath: (media as any)?.finalPath, recorded });
             } catch { }
 
             // Recorded URL resolution handled in dedicated effect below
 
-            // Imported files: use the provided File blob
-            if (media.file) {
+            // Imported files: use the provided File blob (skip for recorded items)
+            if (!recorded && media.file) {
                 const url = getObjectUrl(clip.sourceId, media.file);
                 try { console.log('[preview] source=file-blob', { clipId: clip.id, name: media.name, url }); } catch { }
                 setSrcUrl(url);
