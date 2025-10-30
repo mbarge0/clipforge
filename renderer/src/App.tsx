@@ -288,8 +288,8 @@ export default function App() {
         e.dataTransfer.effectAllowed = 'copy';
     }
 
-    const dropBorder = isDragging ? 'var(--color-brand)' : '#2A2A31';
-    const dropBg = isDragging ? 'rgba(208, 168, 102, 0.12)' : 'transparent';
+    const dropBorder = isDragging ? 'var(--navy)' : '#2A2A31';
+    const dropBg = isDragging ? 'rgba(15, 23, 42, 0.35)' : 'transparent';
 
     // --- Recording implementation ---
     async function startScreenRecording() {
@@ -668,7 +668,7 @@ export default function App() {
 
     // --- UI Render ---
     return (
-        <div style={{ padding: 16, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system' }}>
+        <div style={{ padding: 16, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system', ['--color-brand' as any]: '#D0A866', ['--color-brand-foreground' as any]: '#0B0C10', ['--navy' as any]: '#0F172A' }}>
             {/* HEADER */}
             <header
                 style={{
@@ -680,10 +680,7 @@ export default function App() {
                 }}
             >
                 <div>
-                    <h1 style={{ fontSize: 20, margin: 0 }}>🎬 ClipForge Desktop</h1>
-                    <p style={{ margin: 0, color: '#9CA3AF' }}>
-                        IPC health: <strong>{pong || '...'}</strong>
-                    </p>
+                    <h1 style={{ fontSize: 20, margin: 0, color: 'var(--color-brand)' }}>🎬 ClipForge Desktop</h1>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button
@@ -767,7 +764,7 @@ export default function App() {
             {/* MAIN */}
             <main style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, marginTop: 16 }}>
                 <aside>
-                    <h3 style={{ marginTop: 0, fontSize: 16 }}>Media Library</h3>
+                    <h3 style={{ marginTop: 0, fontSize: 16, color: '#E5E7EB' }}>Media Library</h3>
                     <div
                         onDrop={onDrop}
                         onDragOver={onDragOver}
@@ -810,17 +807,19 @@ export default function App() {
                                         display: 'grid',
                                         gridTemplateColumns: '96px 1fr',
                                         gap: 12,
-                                        border: '1px solid #2A2A31',
+                                        border: '1px solid #243047',
                                         borderRadius: 8,
                                         padding: 8,
-                                        background: '#18181C',
+                                        background: 'var(--navy)',
+                                        maxWidth: '100%',
+                                        overflow: 'hidden',
                                     }}
                                 >
                                     <div
                                         style={{
                                             width: 96,
                                             height: 54,
-                                            background: '#0B0B0D',
+                                            background: '#0B1220',
                                             borderRadius: 6,
                                             overflow: 'hidden',
                                             display: 'flex',
