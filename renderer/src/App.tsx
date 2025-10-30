@@ -919,7 +919,7 @@ export default function App() {
                 {/* TIMELINE + PREVIEW */}
                 <section>
                     {/* Right column: fixed row heights to keep everything visible at launch */}
-                    <div style={{ display: 'grid', gap: 12, gridTemplateRows: '180px 320px 180px' }}>
+                    <div style={{ display: 'grid', gap: 12, gridTemplateRows: '180px minmax(360px, 1fr) 180px' }}>
                         {/* Live capture row */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden', height: '100%' }}>
@@ -941,7 +941,7 @@ export default function App() {
                                 ) : null}
                             </div>
                         </div>
-                        <div style={{ height: '100%', overflow: 'hidden', border: '1px solid #0B0C10', borderRadius: 8 }}>
+                        <div style={{ height: '100%', minHeight: 360, overflow: 'hidden', border: '1px solid #0B0C10', borderRadius: 8 }}>
                             <Preview mediaIndex={mediaIndex} />
                         </div>
                         <div style={{ height: '100%' }}>
