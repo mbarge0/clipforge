@@ -206,72 +206,67 @@ export function Timeline({ mediaIndex }: Props) {
         window.removeEventListener('mouseup', endScrub);
     }
 
+    // Compute total timeline length to size scrollable content
+    const totalMs = tracks.flatMap((t) => t.clips).reduce((acc, c) => Math.max(acc, c.startMs + clipDurationMs(c)), 0);
+    const contentWidth = Math.max(containerWidth, msToPx(totalMs) + 200);
+
     return (
         <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: '#9CA3AF', fontSize: 12 }}>
                 <div>Playhead: {Math.round(playheadMs / 1000)}s</div>
                 <div>Grid: {SNAP_MS}ms • Scale: {100} px/s</div>
             </div>
-            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8 }}>
+            <div ref={containerRef} onClick={onTimelineClick} style={{ border: '1px solid #2A2A31', borderRadius: 8, background: '#111216', padding: 8, overflowX: 'auto' }}>
                 {/* Ruler */}
-                <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
-                    <Ruler playheadMs={playheadMs} width={containerWidth} />
-                </div>
-                {/* Tracks */}
-                <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-                    {tracks.map((track) => (
-                        <div key={track.id} data-trackid={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F1015', border: '1px solid #1F2430', borderRadius: 6 }}>
-                            {track.clips.map((clip) => {
-                                const left = msToPx(clip.startMs);
-                                const width = msToPx(clipDurationMs(clip));
-                                const isSelected = selectedClipId === clip.id;
-                                return (
-                                    <div
-                                        key={clip.id}
-                                        onMouseDown={(e) => onClipMouseDown(e, clip.id, track.id)}
-                                        onDoubleClick={() => setSelection(clip.id)}
-                                        style={{
-                                            position: 'absolute',
-                                            left,
-                                            top: 8,
-                                            height: 48,
-                                            width,
-                                            background: track.id === 't1' ? '#0EA5E9' : '#10B981',
-                                            opacity: 0.85,
-                                            border: isSelected ? '2px solid var(--color-brand)' : '1px solid #0C4A6E',
-                                            boxShadow: isSelected ? '0 0 0 2px var(--color-brand)' : undefined, // focus ring
-                                            borderRadius: 6,
-                                            color: '#0B1220',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            padding: '0 8px',
-                                            boxSizing: 'border-box',
-                                            cursor: 'grab',
-                                            userSelect: 'none',
-                                        }}
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={`Clip ${clip.name}`}
-                                    >
-                                        <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
-                                        {/* Trim handles */}
+                <div style={{ width: contentWidth }}>
+                    <div onMouseDown={startScrub} style={{ position: 'relative', height: 28, background: '#0B0C10', borderRadius: 6, overflow: 'hidden', cursor: 'pointer' }}>
+                        <Ruler playheadMs={playheadMs} width={contentWidth} />
+                    </div>
+                    {/* Tracks */}
+                    <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+                        {tracks.map((track) => (
+                            <div key={track.id} data-trackid={track.id} onDrop={(e) => onDrop(e, track.id)} onDragOver={onDragOver} style={{ position: 'relative', height: 64, background: '#0F1015', border: '1px solid #1F2430', borderRadius: 6 }}>
+                                {track.clips.map((clip) => {
+                                    const left = msToPx(clip.startMs);
+                                    const width = msToPx(clipDurationMs(clip));
+                                    const isSelected = selectedClipId === clip.id;
+                                    return (
                                         <div
-                                            data-handle
-                                            onMouseDown={(e) => onTrimDown(e, clip.id, 'in')}
-                                            style={{ position: 'absolute', left: -4, top: 0, width: 8, height: '100%', background: '#0B1220', opacity: 0.7, cursor: 'ew-resize', borderTopLeftRadius: 6, borderBottomLeftRadius: 6 }}
-                                            aria-label="Trim in"
-                                        />
-                                        <div
-                                            data-handle
-                                            onMouseDown={(e) => onTrimDown(e, clip.id, 'out')}
-                                            style={{ position: 'absolute', right: -4, top: 0, width: 8, height: '100%', background: '#0B1220', opacity: 0.7, cursor: 'ew-resize', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}
-                                            aria-label="Trim out"
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ))}
+                                            key={clip.id}
+                                            onMouseDown={(e) => onClipMouseDown(e, clip.id, track.id)}
+                                            onDoubleClick={() => setSelection(clip.id)}
+                                            style={{
+                                                position: 'absolute',
+                                                left,
+                                                top: 8,
+                                                height: 48,
+                                                width,
+                                                background: track.id === 't1' ? '#0EA5E9' : '#10B981',
+                                                opacity: 0.85,
+                                                border: isSelected ? '2px solid var(--color-brand)' : '1px solid #0C4A6E',
+                                                boxShadow: isSelected ? '0 0 0 2px var(--color-brand)' : undefined,
+                                                borderRadius: 6,
+                                                color: '#0B1220',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                padding: '0 8px',
+                                                boxSizing: 'border-box',
+                                                cursor: 'grab',
+                                                userSelect: 'none',
+                                            }}
+                                            role="button"
+                                            tabIndex={0}
+                                            aria-label={`Clip ${clip.name}`}
+                                        >
+                                            <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clip.name}</span>
+                                            <div data-handle onMouseDown={(e) => onTrimDown(e, clip.id, 'in')} style={{ position: 'absolute', left: -4, top: 0, width: 8, height: '100%', background: '#0B1220', opacity: 0.7, cursor: 'ew-resize', borderTopLeftRadius: 6, borderBottomLeftRadius: 6 }} aria-label="Trim in" />
+                                            <div data-handle onMouseDown={(e) => onTrimDown(e, clip.id, 'out')} style={{ position: 'absolute', right: -4, top: 0, width: 8, height: '100%', background: '#0B1220', opacity: 0.7, cursor: 'ew-resize', borderTopRightRadius: 6, borderBottomRightRadius: 6 }} aria-label="Trim out" />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </div>
         </div>

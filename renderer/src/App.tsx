@@ -648,6 +648,26 @@ export default function App() {
             try { console.log('[record] media:getMetadata result', { id, filePath, meta }); } catch { }
             // propagate finalized path into both path and finalPath
             updateItem(id, { ...(meta || {}), path: filePath, ...({ finalPath: filePath } as any) });
+            // Generate lightweight thumbnail from a seeked frame (avoid black first frame)
+            try {
+                const dataUrl = await (window as any).electron?.getMediaDataUrl?.(filePath);
+                if (dataUrl) {
+                    const v = document.createElement('video');
+                    v.muted = true; v.playsInline = true; v.src = dataUrl;
+                    await new Promise((res) => v.addEventListener('loadedmetadata', res, { once: true }));
+                    const target = Math.min(0.5, Math.max(0, (v.duration || 1) - 0.1));
+                    await new Promise<void>((res) => {
+                        const onSeek = () => { v.removeEventListener('seeked', onSeek); res(); };
+                        v.addEventListener('seeked', onSeek, { once: true });
+                        try { v.currentTime = target; } catch { res(); }
+                    });
+                    const canvas = document.createElement('canvas');
+                    const w = 160; const h = Math.round((v.videoHeight || 1) * (w / (v.videoWidth || 1)));
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) { ctx.drawImage(v, 0, 0, w, h); const thumb = canvas.toDataURL('image/jpeg', 0.75); updateItem(id, { thumbnailDataUrl: thumb }); }
+                }
+            } catch { }
             const duration = (meta?.durationMs ?? 0);
             const startMs = useTimelineStore.getState().playheadMs;
             useTimelineStore.getState().addClip({
