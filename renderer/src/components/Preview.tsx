@@ -3,6 +3,13 @@ import type { MediaItemMeta } from '../lib/media';
 import { getObjectUrl } from '../lib/urlCache';
 import { useTimelineStore } from '../store/timeline';
 
+function isRecordedClip(media: any, clip: any): boolean {
+    const p = media?.finalPath ?? media?.path;
+    if (p && (p.includes('clipforge-record-') || p.includes('fixed-record-'))) return true;
+    if (clip?.sourceId?.startsWith?.('rec-')) return true;
+    return false;
+}
+
 type Props = {
     mediaIndex: Record<string, MediaItemMeta>;
 };
@@ -18,6 +25,7 @@ export function Preview({ mediaIndex }: Props) {
 
     const videoRef = React.useRef<HTMLVideoElement | null>(null);
     const [srcUrl, setSrcUrl] = React.useState<string | undefined>(undefined);
+    const objectUrlRef = React.useRef<string | undefined>(undefined);
     const [fps, setFps] = React.useState<number>(0);
     const [scrubLatencyMs, setScrubLatencyMs] = React.useState<number | undefined>(undefined);
     const playheadRef = React.useRef<number>(playheadMs);
@@ -41,24 +49,121 @@ export function Preview({ mediaIndex }: Props) {
         return sortedTracks[0]?.clips[0] || sortedTracks[1]?.clips[0];
     }, [sortedTracks, selectedClipId, playheadMs]);
 
+    const currentMedia = React.useMemo(() => {
+        return currentClip ? mediaIndex[currentClip.sourceId] : undefined;
+    }, [currentClip, mediaIndex]);
+
     React.useEffect(() => {
         const clip = currentClip;
-        if (!clip) return;
-        const media = mediaIndex[clip.sourceId];
-        if (!media?.file) return;
-        const url = getObjectUrl(clip.sourceId, media.file);
-        setSrcUrl(url);
+        let revoked = false;
+        (async () => {
+            if (!clip) return setSrcUrl(undefined);
+            const media = mediaIndex[clip.sourceId];
+            if (!media) return setSrcUrl(undefined);
+
+            let recorded = false;
+            try {
+                recorded = isRecordedClip(media as any, clip as any);
+                console.log('[preview.detect]', { clipId: clip?.id, name: (media as any)?.name, path: (media as any)?.path, finalPath: (media as any)?.finalPath, recorded });
+            } catch { }
+
+            // Recorded URL resolution handled in dedicated effect below
+
+            // Imported files: use the provided File blob (skip for recorded items)
+            if (!recorded && media.file) {
+                const url = getObjectUrl(clip.sourceId, media.file);
+                try { console.log('[preview] source=file-blob', { clipId: clip.id, name: media.name, url }); } catch { }
+                setSrcUrl(url);
+                objectUrlRef.current = undefined;
+                return;
+            }
+
+            setSrcUrl(undefined);
+            objectUrlRef.current = undefined;
+        })();
+        return () => {
+            revoked = true;
+            const u = objectUrlRef.current;
+            if (u && (window as any).electron?.revokeObjectUrl) {
+                try { (window as any).electron.revokeObjectUrl(u); } catch { }
+            }
+            try { console.log('[preview] revoke object url (cleanup)', { url: u }); } catch { }
+            objectUrlRef.current = undefined;
+        };
     }, [currentClip, mediaIndex]);
+
+    // Resolve file-based URL for recorded clips after mount and when media path changes
+    React.useEffect(() => {
+        const clip = currentClip;
+        const media = currentMedia as any;
+        if (!clip || !media) return;
+        const path = media?.finalPath || media?.path;
+        const recorded = media?.recorded === true || (typeof path === 'string' && path.includes('/clipforge-record-'));
+        if (!recorded || !path || !(window as any).electron?.getMediaDataUrl) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                try { console.log('[preview.dataurl] requesting base64 data', { path }); } catch { }
+                const dataUrl = await (window as any).electron.getMediaDataUrl(String(path));
+                if (!cancelled && dataUrl) {
+                    try { console.log('[preview.dataurl] using base64 data URL'); } catch { }
+                    setSrcUrl(dataUrl);
+                    objectUrlRef.current = dataUrl;
+                }
+            } catch (err) {
+                try { console.warn('[preview.dataurl] failed toMediaUrl', err); } catch { }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [currentClip, currentMedia?.path, currentMedia?.finalPath]);
+
+    // Attach detailed listeners for diagnostics on src changes
+    React.useEffect(() => {
+        const v = videoRef.current;
+        if (!v) return;
+        const onLoadedMetadata = () => {
+            try { console.log('[preview] loadedmetadata', { duration: v.duration, videoWidth: v.videoWidth, videoHeight: v.videoHeight, readyState: v.readyState }); } catch { }
+        };
+        const onCanPlay = () => { try { console.log('[preview] canplay'); } catch { } };
+        const onCanPlayThrough = () => { try { console.log('[preview] canplaythrough'); } catch { } };
+        const onError = () => { try { console.log('[preview] error', { error: (v as any).error }); } catch { } };
+        const onPlaying = () => { try { console.log('[preview] playing'); } catch { } };
+        const onPause = () => { try { console.log('[preview] pause'); } catch { } };
+        const onSeeked = () => { try { console.log('[preview] seeked', { currentTime: v.currentTime }); } catch { } };
+        v.addEventListener('loadedmetadata', onLoadedMetadata);
+        v.addEventListener('canplay', onCanPlay);
+        v.addEventListener('canplaythrough', onCanPlayThrough);
+        v.addEventListener('error', onError);
+        v.addEventListener('playing', onPlaying);
+        v.addEventListener('pause', onPause);
+        v.addEventListener('seeked', onSeeked);
+        return () => {
+            v.removeEventListener('loadedmetadata', onLoadedMetadata);
+            v.removeEventListener('canplay', onCanPlay);
+            v.removeEventListener('canplaythrough', onCanPlayThrough);
+            v.removeEventListener('error', onError);
+            v.removeEventListener('playing', onPlaying);
+            v.removeEventListener('pause', onPause);
+            v.removeEventListener('seeked', onSeeked);
+        };
+    }, [srcUrl]);
 
     React.useEffect(() => {
         const v = videoRef.current;
         if (!v || !currentClip) return;
         const rel = Math.max(0, playheadMs - currentClip.startMs) / 1000 + currentClip.inMs / 1000;
         if (Math.abs(v.currentTime - rel) > 0.05) {
+            try { console.log('[preview] programmatic seek', { rel }); } catch { }
             try { v.currentTime = rel; } catch { }
         }
-        if (isPlaying && v.paused) v.play().catch(() => { });
-        if (!isPlaying && !v.paused) v.pause();
+        if (isPlaying && v.paused) {
+            try { console.log('[preview] calling play()'); } catch { }
+            v.play().catch(() => { });
+        }
+        if (!isPlaying && !v.paused) {
+            try { console.log('[preview] calling pause()'); } catch { }
+            v.pause();
+        }
     }, [playheadMs, isPlaying, currentClip]);
 
     // Advance playhead while playing (simple loop)
@@ -127,15 +232,15 @@ export function Preview({ mediaIndex }: Props) {
     }, [lastScrubRequestedAt]);
 
     return (
-        <div style={{ background: '#0B0C10', border: '1px solid #2A2A31', borderRadius: 12, padding: 12 }}>
+        <div style={{ background: 'var(--navy)', border: '1px solid #243047', borderRadius: 12, padding: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                <strong style={{ color: '#E5E7EB' }}>Preview</strong>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#9CA3AF', fontSize: 12 }}>
+                <strong style={{ color: 'var(--color-brand)' }}>Preview</strong>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: '#E5E7EB', fontSize: 12 }}>
                     <div>FPS: <span style={{ color: '#E5E7EB' }}>{fps}</span></div>
                     <div>Scrub: <span style={{ color: '#E5E7EB' }}>{scrubLatencyMs != null ? `${scrubLatencyMs}ms` : '—'}</span></div>
                     <button
                         onClick={() => togglePlay()}
-                        style={{ background: '#111827', color: '#E5E7EB', border: '1px solid #374151', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}
+                        style={{ background: 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 6, padding: '6px 10px', cursor: 'pointer' }}
                         aria-label={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
                     >
                         {isPlaying ? 'Pause' : 'Play'} (Space)

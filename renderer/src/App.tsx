@@ -8,8 +8,9 @@ import {
     MAX_FILE_BYTES,
     SUPPORTED_EXTENSIONS,
     validateFileBasic,
-    type MediaItemMeta,
+    type MediaItemMeta
 } from './lib/media';
+import { generateId } from './lib/timeline';
 import { useMediaStore } from './store/media';
 import { useTimelineStore } from './store/timeline';
 
@@ -25,6 +26,27 @@ export default function App() {
     const [isDragging, setIsDragging] = React.useState(false);
     const [toasts, setToasts] = React.useState<Toast[]>([]);
     const inputRef = React.useRef<HTMLInputElement | null>(null);
+    const [recordMode, setRecordMode] = React.useState<undefined | 'screen' | 'webcam' | 'pip'>(undefined);
+    const [recordElapsedMs, setRecordElapsedMs] = React.useState<number>(0);
+    const recordTimerRef = React.useRef<number | null>(null);
+    const recordersRef = React.useRef<{
+        kind: 'single' | 'pip';
+        rec1?: MediaRecorder;
+        rec2?: MediaRecorder;
+        session1?: string;
+        session2?: string;
+        pending1?: Promise<any>[];
+        pending2?: Promise<any>[];
+        bytes1?: number;
+        bytes2?: number;
+        stopping1?: boolean;
+    } | null>(null);
+
+    // Live capture debug previews
+    const debugScreenRef = React.useRef<HTMLVideoElement | null>(null);
+    const debugCamRef = React.useRef<HTMLVideoElement | null>(null);
+    const [screenError, setScreenError] = React.useState<string | undefined>(undefined);
+    const [camError, setCamError] = React.useState<string | undefined>(undefined);
 
     const playheadMs = useTimelineStore((s) => s.playheadMs);
     const togglePlay = useTimelineStore((s) => s.togglePlay);
@@ -38,6 +60,16 @@ export default function App() {
     const clipsSourceIds = useTimelineStore(
         (s) => new Set(s.tracks.flatMap((t) => t.clips.map((c) => c.sourceId)))
     );
+
+    // Bridge diagnostics (one-time)
+    React.useEffect(() => {
+        try {
+            console.log('[bridge:keys]', Object.keys((window as any).electron || {}));
+            if (typeof (window as any).electron?.getDesktopSources !== 'function') {
+                console.error('[bridge] getDesktopSources STILL missing');
+            }
+        } catch { }
+    }, []);
 
     // Export UI state
     const [showExport, setShowExport] = React.useState(false);
@@ -161,9 +193,9 @@ export default function App() {
 
             // Try to get a reliable path
             let filePath = (file as any).path;
-            if (!filePath && window.electron?.invoke) {
+            if (!filePath && window.electron?.getPathForFileName) {
                 try {
-                    const result = await window.electron.invoke('media:getPathForFileName', file.name);
+                    const result = await window.electron.getPathForFileName(file.name);
                     if (typeof result === 'string' && result.length > 0) {
                         filePath = result;
                         console.log('[media] resolved via IPC', { name: file.name, path: filePath });
@@ -256,12 +288,407 @@ export default function App() {
         e.dataTransfer.effectAllowed = 'copy';
     }
 
-    const dropBorder = isDragging ? '#6E56CF' : '#2A2A31';
-    const dropBg = isDragging ? 'rgba(110, 86, 207, 0.08)' : 'transparent';
+    const dropBorder = isDragging ? 'var(--navy)' : '#2A2A31';
+    const dropBg = isDragging ? 'rgba(15, 23, 42, 0.35)' : 'transparent';
+
+    // --- Recording implementation ---
+    async function startScreenRecording() {
+        if (recordMode) return;
+        try {
+            console.log('[record] startScreenRecording: begin');
+            const mockPath = (window as any).__TEST_MOCK_RECORDING_PATH__ as string | undefined;
+            if (mockPath) {
+                // Test-mode: simulate recording session; actual file provided by test
+                recordersRef.current = { kind: 'single', session1: mockPath };
+                startTimer('screen');
+                console.log('[record] startScreenRecording: test-mode mock active', { mockPath });
+                return;
+            }
+            // Use preload bridge to obtain desktop sources
+            if (typeof (window as any).electron?.getDesktopSources !== 'function') {
+                console.warn('[record] getDesktopSources missing from bridge');
+                showToast('error', 'Bridge missing getDesktopSources. Relaunch app.');
+                throw new Error('no_bridge_getDesktopSources');
+            }
+            const sources: any[] = await (window as any).electron.getDesktopSources({ types: ['screen'] });
+            const source = sources.find((s: any) => s.name === 'Entire Screen') || sources[0];
+            if (!source) {
+                console.warn('[record] No screen sources detected');
+                showToast('error', 'No screens detected. Enable Screen Recording and relaunch.');
+                throw new Error('no_screen_source');
+            }
+            console.log('[record] selected source:', { id: source.id, name: source.name });
+            const display: MediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: source.id,
+                        maxFrameRate: 30,
+                    },
+                },
+            } as any);
+            const vCount = (display.getVideoTracks?.() || []).length;
+            try { console.log('[record] got screen stream', vCount, 'video tracks'); } catch { }
+            if (vCount === 0) {
+                console.warn('[record] no video track detected — Screen Recording permission may be missing');
+                showToast('error', 'No video track. Enable Screen Recording in System Settings and relaunch.');
+                setScreenError('Screen capture failed');
+            } else {
+                setScreenError(undefined);
+            }
+
+            // Attach live screen preview
+            try {
+                const sv = debugScreenRef.current;
+                if (sv) {
+                    (sv as any).srcObject = display;
+                    await sv.play().catch(() => { });
+                    console.log('[record] attached screen preview');
+                }
+            } catch { }
+
+            // Acquire webcam preview in parallel
+            try {
+                console.log('[record] requesting webcam…');
+                const cam = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                console.log('[record] getUserMedia success (webcam):', { v: cam.getVideoTracks().length, a: cam.getAudioTracks().length });
+                const cv = debugCamRef.current;
+                if (cv) { (cv as any).srcObject = cam; await cv.play().catch(() => { }); console.log('[record] attached webcam preview'); }
+                setCamError(undefined);
+            } catch (e) {
+                console.warn('[record] webcam capture failed', e);
+                setCamError('Webcam capture failed');
+            }
+
+            const stream = await combineWithMic(display);
+            console.log('[record] combineWithMic resolved: tracks=', stream?.getTracks?.().length, stream?.getTracks?.().map((t: MediaStreamTrack) => ({ kind: t.kind, enabled: t.enabled })));
+            const mimeType = pickMimeType();
+            console.log('[record] mimeType selected:', mimeType);
+            const { sessionId, filePath } = await electron.recordOpenFile({ extension: 'webm' });
+            console.log('[record] recordOpenFile response:', { sessionId, filePath });
+            let rec: MediaRecorder;
+            try {
+                rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+            } catch (err: any) {
+                console.error('[record] MediaRecorder ctor threw:', { name: err?.name, message: err?.message, stack: err?.stack });
+                throw err;
+            }
+            const pending: Promise<any>[] = [];
+            let totalBytes = 0;
+            let finalResolved = false;
+            let finalResolve: () => void = () => { };
+            const final = new Promise<void>((res) => { finalResolve = res; });
+            rec.ondataavailable = async (evt: BlobEvent) => {
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer();
+                        totalBytes += buf.byteLength;
+                        console.log('[record] chunk', { size: buf.byteLength, totalBytes });
+                        await electron.recordAppendChunk(sessionId, buf);
+                    })();
+                    pending.push(p);
+                    await p.catch(() => { });
+                    // If stop() triggered a final dataavailable, resolve after its append completes
+                    if (recordersRef.current?.rec1 === rec && recordersRef.current?.stopping1 && !finalResolved) {
+                        finalResolved = true;
+                        try { await p; } catch { }
+                        try { finalResolve(); } catch { }
+                    }
+                }
+            };
+            rec.onstop = async () => {
+                try {
+                    console.log('[record] onstop: waiting pending', { count: pending.length, totalBytes });
+                    // Ensure the final dataavailable (triggered by stop/requestData) is flushed
+                    try { await final; } catch { }
+                    await Promise.allSettled(pending);
+                    // Small post-stop delay to allow encoder to finish header/cues
+                    await new Promise((r) => setTimeout(r, 150));
+                    console.log('[record] onstop: finalize complete', { totalBytes });
+                    const closedPath = await electron.recordCloseFile(sessionId);
+                    const finalPath = (typeof closedPath === 'string' && closedPath) ? closedPath : filePath;
+                    console.log('[record] onstop: close result', { closedPath, finalPath });
+                    await addRecordedToLibrary(finalPath, 'screen');
+                    cleanupTimer();
+                    setRecordMode(undefined);
+                    console.log('[record] onstop: session closed and media added', { sessionId, finalPath });
+                } catch (e) {
+                    console.error('[record] finalize failed', e);
+                }
+            };
+            console.log('[record] starting MediaRecorder with timeslice=1000ms');
+            rec.start(1000);
+            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes, stopping1: false } as any;
+            startTimer('screen');
+            console.log('[record] startScreenRecording: recorder active');
+        } catch (err) {
+            console.error('[record] startScreenRecording failed:', { name: (err as any)?.name, message: (err as any)?.message, stack: (err as any)?.stack });
+            showToast('error', 'Failed to start screen recording');
+        }
+    }
+
+    async function startWebcamRecording() {
+        if (recordMode) return;
+        try {
+            console.log('[record] startWebcamRecording: begin');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            console.log('[record] webcam tracks:', { v: stream.getVideoTracks().length, a: stream.getAudioTracks().length });
+            // Attach live webcam preview
+            try {
+                const cv = debugCamRef.current; if (cv) { (cv as any).srcObject = stream; await cv.play().catch(() => { }); console.log('[record] attached webcam live preview'); }
+            } catch { }
+
+            const mimeType = pickMimeType();
+            const { sessionId, filePath } = await electron.recordOpenFile({ extension: 'webm' });
+            console.log('[record] webcam recordOpenFile response:', { sessionId, filePath });
+            const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+            const pending: Promise<any>[] = [];
+            let totalBytes = 0;
+            let finalResolved = false;
+            let finalResolve: () => void = () => { };
+            const final = new Promise<void>((res) => { finalResolve = res; });
+
+            rec.ondataavailable = async (evt: BlobEvent) => {
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); totalBytes += buf.byteLength;
+                        console.log('[record:webcam] chunk', { size: buf.byteLength, totalBytes });
+                        await electron.recordAppendChunk(sessionId, buf);
+                    })();
+                    pending.push(p);
+                    await p.catch(() => { });
+                    if (recordersRef.current?.rec1 === rec && (recordersRef.current as any)?.stopping1 && !finalResolved) {
+                        finalResolved = true; try { await p; } catch { }; try { finalResolve(); } catch { }
+                    }
+                }
+            };
+            rec.onstop = async () => {
+                try {
+                    console.log('[record:webcam] onstop: waiting pending', { count: pending.length, totalBytes });
+                    try { await final; } catch { }
+                    await Promise.allSettled(pending);
+                    await new Promise((r) => setTimeout(r, 150));
+                    console.log('[record:webcam] finalize complete', { totalBytes });
+                    const closedPath = await electron.recordCloseFile(sessionId);
+                    const finalPath = (typeof closedPath === 'string' && closedPath) ? closedPath : filePath;
+                    console.log('[record:webcam] close result', { closedPath, finalPath });
+                    await addRecordedToLibrary(finalPath, 'webcam');
+                    cleanupTimer(); setRecordMode(undefined);
+                } catch (e) {
+                    console.error('[record:webcam] finalize failed', e);
+                }
+            };
+            console.log('[record:webcam] starting MediaRecorder with timeslice=1000ms');
+            rec.start(1000);
+            recordersRef.current = { kind: 'single', rec1: rec, session1: sessionId, pending1: pending, bytes1: totalBytes, stopping1: false } as any;
+            startTimer('webcam');
+        } catch {
+            showToast('error', 'Failed to start webcam recording');
+        }
+    }
+
+    // --- Picture-in-Picture (PiP) Recording ---
+    async function startPiPRecording() {
+        if (recordMode) return;
+        try {
+            console.log('[record] startPiPRecording: begin');
+
+            // ✅ REPLACEMENT: Use Electron desktopCapturer instead of getDisplayMedia
+            const { desktopCapturer } = (window as any).electron || require('electron');
+            const sources = await desktopCapturer.getSources({ types: ['screen'] });
+            if (!sources.length) throw new Error('no_screen_sources');
+            console.log('[record] desktopCapturer sources:', sources.map((s: any) => s.name));
+
+            const screenStream = await navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    mandatory: {
+                        chromeMediaSource: 'desktop',
+                        chromeMediaSourceId: sources[0].id,
+                    },
+                },
+            } as any);
+
+            // Combine with mic input for PiP audio
+            const combinedScreenStream = await combineWithMic(screenStream);
+            const camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            const mimeType = pickMimeType();
+
+            const f1 = await electron.recordOpenFile({ extension: 'webm' });
+            const f2 = await electron.recordOpenFile({ extension: 'webm' });
+
+            const rec1 = new MediaRecorder(combinedScreenStream, mimeType ? { mimeType } : undefined);
+            const rec2 = new MediaRecorder(camStream, mimeType ? { mimeType } : undefined);
+            const pending1: Promise<any>[] = [];
+            const pending2: Promise<any>[] = [];
+            let bytes1 = 0, bytes2 = 0;
+            rec1.ondataavailable = async (evt: BlobEvent) => {
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); bytes1 += buf.byteLength; console.log('[record:pip] screen chunk', { size: buf.byteLength, bytes1 }); await electron.recordAppendChunk(f1.sessionId, buf);
+                    })(); pending1.push(p); await p.catch(() => { });
+                }
+            };
+            rec2.ondataavailable = async (evt: BlobEvent) => {
+                if (evt.data && evt.data.size) {
+                    const p = (async () => {
+                        const buf = await evt.data.arrayBuffer(); bytes2 += buf.byteLength; console.log('[record:pip] cam chunk', { size: buf.byteLength, bytes2 }); await electron.recordAppendChunk(f2.sessionId, buf);
+                    })(); pending2.push(p); await p.catch(() => { });
+                }
+            };
+
+            let stoppedCount = 0;
+            const onStop = async () => {
+                stoppedCount++;
+                if (stoppedCount < 2) return;
+                console.log('[record:pip] onstop: waiting pending', { pending1: pending1.length, pending2: pending2.length, bytes1, bytes2 });
+                await Promise.allSettled(pending1);
+                await Promise.allSettled(pending2);
+                // Small post-stop delay to allow encoder to finish header/cues
+                await new Promise((r) => setTimeout(r, 150));
+                console.log('[record:pip] onstop: finalize complete', { bytes1, bytes2 });
+                await electron.recordCloseFile(f1.sessionId);
+                await electron.recordCloseFile(f2.sessionId);
+                const outPath = await electron.recordComposePiP({
+                    screenPath: f1.filePath,
+                    webcamPath: f2.filePath,
+                    outExtension: 'mp4',
+                });
+                await addRecordedToLibrary(outPath, 'pip');
+                cleanupTimer();
+                setRecordMode(undefined);
+            };
+
+            rec1.onstop = onStop;
+            rec2.onstop = onStop;
+
+            rec1.start(1000);
+            rec2.start(1000);
+            recordersRef.current = {
+                kind: 'pip',
+                rec1,
+                rec2,
+                session1: f1.sessionId,
+                session2: f2.sessionId,
+                pending1,
+                pending2,
+                bytes1,
+                bytes2,
+            };
+
+            startTimer('pip');
+            console.log('[record] startPiPRecording: recorder active');
+        } catch (err) {
+            console.error('[record] startPiPRecording failed:', err);
+            showToast('error', 'Failed to start PiP recording');
+        }
+    }
+
+    async function stopRecording() {
+        const ref = recordersRef.current;
+        if (!ref) return;
+        try {
+            // Mock path mode: no rec1/rec2 present; add provided path directly
+            const mockPath = (!ref.rec1 && !ref.rec2) ? ref.session1 : undefined;
+            if (mockPath) {
+                await addRecordedToLibrary(mockPath, recordMode || 'screen');
+                cleanupTimer();
+                setRecordMode(undefined);
+                recordersRef.current = null;
+                return;
+            }
+            if (ref.rec1 && ref.rec1.state !== 'inactive') {
+                (ref as any).stopping1 = true;
+                try { ref.rec1.requestData(); } catch { }
+                ref.rec1.stop();
+            }
+            if (ref.rec2 && ref.rec2.state !== 'inactive') {
+                try { ref.rec2.requestData(); } catch { }
+                ref.rec2.stop();
+            }
+        } catch { }
+    }
+
+    function startTimer(mode: 'screen' | 'webcam' | 'pip') {
+        setRecordMode(mode);
+        setRecordElapsedMs(0);
+        if (recordTimerRef.current) cancelAnimationFrame(recordTimerRef.current);
+        let start = performance.now();
+        const step = (now: number) => {
+            setRecordElapsedMs(Math.max(0, Math.round(now - start)));
+            recordTimerRef.current = requestAnimationFrame(step);
+        };
+        recordTimerRef.current = requestAnimationFrame(step);
+    }
+
+    function cleanupTimer() {
+        if (recordTimerRef.current) cancelAnimationFrame(recordTimerRef.current);
+        recordTimerRef.current = null;
+        setRecordElapsedMs(0);
+    }
+
+    async function addRecordedToLibrary(filePath: string, kind: 'screen' | 'webcam' | 'pip') {
+        const baseName = filePath.split(/[/\\]/).pop() || `${kind}-${Date.now()}.webm`;
+        const id = generateId('rec');
+        const base: MediaItemMeta = {
+            id,
+            file: new File([], baseName),
+            path: filePath,
+            // ensure both fields point to finalized path for preview/export consumers
+            // @ts-ignore - tolerate extra field if not in type
+            finalPath: filePath,
+            name: baseName,
+            sizeBytes: 0,
+        };
+        addItem(base);
+        try {
+            const meta = await (window as any).electron.invoke('media:getMetadata', filePath);
+            try { console.log('[record] media:getMetadata result', { id, filePath, meta }); } catch { }
+            // propagate finalized path into both path and finalPath
+            updateItem(id, { ...(meta || {}), path: filePath, ...({ finalPath: filePath } as any) });
+            // Generate lightweight thumbnail from a seeked frame (avoid black first frame)
+            try {
+                const dataUrl = await (window as any).electron?.getMediaDataUrl?.(filePath);
+                if (dataUrl) {
+                    const v = document.createElement('video');
+                    v.muted = true; v.playsInline = true; v.src = dataUrl;
+                    await new Promise((res) => v.addEventListener('loadedmetadata', res, { once: true }));
+                    const target = Math.min(0.5, Math.max(0, (v.duration || 1) - 0.1));
+                    await new Promise<void>((res) => {
+                        const onSeek = () => { v.removeEventListener('seeked', onSeek); res(); };
+                        v.addEventListener('seeked', onSeek, { once: true });
+                        try { v.currentTime = target; } catch { res(); }
+                    });
+                    const canvas = document.createElement('canvas');
+                    const w = 160; const h = Math.round((v.videoHeight || 1) * (w / (v.videoWidth || 1)));
+                    canvas.width = w; canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) { ctx.drawImage(v, 0, 0, w, h); const thumb = canvas.toDataURL('image/jpeg', 0.75); updateItem(id, { thumbnailDataUrl: thumb }); }
+                }
+            } catch { }
+            const duration = (meta?.durationMs ?? 0);
+            const startMs = useTimelineStore.getState().playheadMs;
+            useTimelineStore.getState().addClip({
+                sourceId: id,
+                name: baseName,
+                file: base.file,
+                startMs,
+                inMs: 0,
+                outMs: Math.max(1000, duration || 1000),
+                trackId: 't1',
+                sourcePath: filePath,
+            });
+            showToast('success', `Added ${kind} recording`);
+        } catch (e) {
+            showToast('error', 'Failed to read recorded metadata');
+        }
+    }
 
     // --- UI Render ---
     return (
-        <div style={{ padding: 16, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system' }}>
+        <div style={{ padding: 16, fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system', ['--color-brand' as any]: '#D0A866', ['--color-brand-foreground' as any]: '#0B0C10', ['--navy' as any]: '#0F172A' }}>
             {/* HEADER */}
             <header
                 style={{
@@ -273,17 +700,14 @@ export default function App() {
                 }}
             >
                 <div>
-                    <h1 style={{ fontSize: 20, margin: 0 }}>🎬 ClipForge Desktop</h1>
-                    <p style={{ margin: 0, color: '#9CA3AF' }}>
-                        IPC health: <strong>{pong || '...'}</strong>
-                    </p>
+                    <h1 style={{ fontSize: 20, margin: 0, color: 'var(--color-brand)' }}>🎬 ClipForge Desktop</h1>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button
                         onClick={openPicker}
                         style={{
-                            background: '#6E56CF',
-                            color: '#fff',
+                            background: 'var(--color-brand)',
+                            color: 'var(--color-brand-foreground)',
                             border: 'none',
                             borderRadius: 8,
                             padding: '8px 12px',
@@ -295,8 +719,8 @@ export default function App() {
                     <button
                         onClick={() => setShowExport(true)}
                         style={{
-                            background: '#0EA5E9',
-                            color: '#0B0C10',
+                            background: 'var(--color-brand)',
+                            color: 'var(--color-brand-foreground)',
                             border: 'none',
                             borderRadius: 8,
                             padding: '8px 12px',
@@ -305,6 +729,40 @@ export default function App() {
                     >
                         Export
                     </button>
+                    {/* Recording Controls */}
+                    <button
+                        onClick={() => void startScreenRecording()}
+                        disabled={!!recordMode}
+                        aria-label="Record Screen"
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                    >
+                        Record Screen
+                    </button>
+                    <button
+                        onClick={() => void startWebcamRecording()}
+                        disabled={!!recordMode}
+                        aria-label="Record Webcam"
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                    >
+                        Record Webcam
+                    </button>
+                    <button
+                        onClick={() => void startPiPRecording()}
+                        disabled={!!recordMode}
+                        aria-label="Record Screen + Webcam"
+                        style={{ background: recordMode ? '#1F2937' : 'var(--color-brand)', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: recordMode ? 'not-allowed' : 'pointer' }}
+                    >
+                        Screen+Webcam
+                    </button>
+                    {recordMode ? (
+                        <button
+                            onClick={() => void stopRecording()}
+                            aria-label="Stop Recording"
+                            style={{ background: '#B91C1C', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}
+                        >
+                            Stop
+                        </button>
+                    ) : null}
                 </div>
                 <input
                     ref={inputRef}
@@ -315,11 +773,18 @@ export default function App() {
                     style={{ display: 'none' }}
                 />
             </header>
+            {/* Recording status */}
+            {recordMode ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 8, color: '#E5E7EB' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 9999, background: '#EF4444', display: 'inline-block' }} />
+                    <span style={{ fontSize: 12 }}>{recordMode.toUpperCase()} • {formatDuration(recordElapsedMs)}</span>
+                </div>
+            ) : null}
 
             {/* MAIN */}
             <main style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, marginTop: 16 }}>
                 <aside>
-                    <h3 style={{ marginTop: 0, fontSize: 16 }}>Media Library</h3>
+                    <h3 style={{ marginTop: 0, fontSize: 16, color: '#E5E7EB' }}>Media Library</h3>
                     <div
                         onDrop={onDrop}
                         onDragOver={onDragOver}
@@ -362,17 +827,19 @@ export default function App() {
                                         display: 'grid',
                                         gridTemplateColumns: '96px 1fr',
                                         gap: 12,
-                                        border: '1px solid #2A2A31',
+                                        border: '1px solid #243047',
                                         borderRadius: 8,
                                         padding: 8,
-                                        background: '#18181C',
+                                        background: 'var(--navy)',
+                                        maxWidth: '100%',
+                                        overflow: 'hidden',
                                     }}
                                 >
                                     <div
                                         style={{
                                             width: 96,
                                             height: 54,
-                                            background: '#0B0B0D',
+                                            background: '#0B1220',
                                             borderRadius: 6,
                                             overflow: 'hidden',
                                             display: 'flex',
@@ -407,8 +874,8 @@ export default function App() {
                                                 <span
                                                     style={{
                                                         fontSize: 10,
-                                                        color: '#6E56CF',
-                                                        border: '1px solid #6E56CF',
+                                                        color: 'var(--color-brand)',
+                                                        border: '1px solid var(--color-brand)',
                                                         borderRadius: 999,
                                                         padding: '0 6px',
                                                     }}
@@ -451,9 +918,35 @@ export default function App() {
 
                 {/* TIMELINE + PREVIEW */}
                 <section>
-                    <div style={{ display: 'grid', gap: 12 }}>
-                        <Preview mediaIndex={mediaIndex} />
-                        <Timeline mediaIndex={mediaIndex} />
+                    {/* Right column: fixed row heights to keep everything visible at launch */}
+                    <div style={{ display: 'grid', gap: 12, gridTemplateRows: '180px minmax(360px, 1fr) 180px' }}>
+                        {/* Live capture row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden', height: '100%' }}>
+                                <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Screen (live)</div>
+                                <video ref={debugScreenRef} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                {screenError ? (
+                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
+                                        {screenError}
+                                    </div>
+                                ) : null}
+                            </div>
+                            <div style={{ position: 'relative', background: '#0F172A', border: '1px solid #2A2A31', borderRadius: 8, overflow: 'hidden', height: '100%' }}>
+                                <div style={{ position: 'absolute', top: 6, left: 8, color: '#9CA3AF', fontSize: 12 }}>Webcam (live)</div>
+                                <video ref={debugCamRef} muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                {camError ? (
+                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', color: '#FCA5A5', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>
+                                        {camError}
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+                        <div style={{ height: '100%', minHeight: 360, overflow: 'hidden', border: '1px solid #0B0C10', borderRadius: 8 }}>
+                            <Preview mediaIndex={mediaIndex} />
+                        </div>
+                        <div style={{ height: '100%' }}>
+                            <Timeline mediaIndex={mediaIndex} />
+                        </div>
                     </div>
                 </section>
             </main>
@@ -508,7 +1001,7 @@ export default function App() {
                                             showToast('error', 'Failed to start export');
                                         }
                                     }}
-                                    style={{ background: destinationPath ? '#0EA5E9' : '#1F2937', color: '#0B0C10', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: destinationPath ? 'pointer' : 'not-allowed' }}
+                                    style={{ background: destinationPath ? 'var(--color-brand)' : '#1F2937', color: 'var(--color-brand-foreground)', border: 'none', borderRadius: 8, padding: '8px 12px', cursor: destinationPath ? 'pointer' : 'not-allowed' }}
                                     aria-label="Start export"
                                     disabled={!destinationPath}
                                 >
@@ -521,7 +1014,7 @@ export default function App() {
                             <div style={{ marginTop: 16 }}>
                                 <div style={{ color: '#9CA3AF', fontSize: 12, marginBottom: 6 }}>{exportStatus || 'Exporting…'}</div>
                                 <div style={{ height: 10, background: '#111827', border: '1px solid #374151', borderRadius: 999, overflow: 'hidden' }}>
-                                    <div style={{ width: `${exportProgress}%`, height: '100%', background: '#0EA5E9' }} />
+                                    <div style={{ width: `${exportProgress}%`, height: '100%', background: 'var(--color-brand)' }} />
                                 </div>
                                 <div style={{ color: '#E5E7EB', fontSize: 12, marginTop: 6 }}>{Math.round(exportProgress)}%</div>
                             </div>
@@ -617,3 +1110,28 @@ function buildExportSegments(
     }
     return segments;
 }
+
+/** --- Recording Helpers --- */
+function pickMimeType(): string | undefined {
+    // Prefer VP8 to improve container finalization (cues/duration in Chromium)
+    const candidates = [
+        'video/webm; codecs=vp8,opus',
+        'video/webm; codecs=vp9,opus',
+        'video/webm',
+    ];
+    for (const m of candidates) {
+        if ((window as any).MediaRecorder?.isTypeSupported?.(m)) return m;
+    }
+    return undefined;
+}
+
+async function combineWithMic(stream: MediaStream): Promise<MediaStream> {
+    try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const out = new MediaStream([...stream.getVideoTracks(), ...mic.getAudioTracks()]);
+        return out;
+    } catch {
+        return stream;
+    }
+}
+

@@ -1,16 +1,17 @@
 {
-  "name": "foundry-desktop",
+  "name": "ClipForge",
   "version": "0.1.0",
   "description": "Foundry subtemplate for Electron/Tauri desktop apps (ClipForge base)",
   "main": "main/main.js",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "preload:build": "tsc main/preload.ts --outDir main --target ES2020 --module commonjs",
     "dev": "cross-env VITE_DEV=1 concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electronmon .\"",
     "start": "electron-forge start",
     "make": "electron-forge make",
     "package": "electron-forge package",
-    "test:e2e": "playwright test --project=chromium"
+    "test:e2e": "playwright test --project=chromium",
+    "build": "vite build"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.10.2",
@@ -22,6 +23,7 @@
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron-forge/plugin-vite": "^7.10.2",
     "@electron/fuses": "^1.8.0",
+    "@electron/universal": "^2.0.3",
     "@playwright/test": "^1.56.1",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
